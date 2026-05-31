@@ -9,7 +9,7 @@
     --bg:#0f1115; --ink:#11151c; --muted:#5b6573; --line:#e6e9ef;
     --accent:#0e7490; --accent2:#1f8a7d; --chip:#9aa3af; --card:#ffffff;
     --live-bg:#f6f8fb; --ans-bg:#ffffff; --good:#16a34a;
-    --panel-w: 30vw;
+    --panel-w: 33.334vw;   /* docked at one third of the screen width */
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0;height:100%;}
@@ -40,14 +40,16 @@
   .launch.live .dot{background:#ff5d5d; animation:pulse 1.2s infinite;}
   @keyframes pulse{0%{box-shadow:0 0 0 0 #ff5d5d88;}70%{box-shadow:0 0 0 8px #ff5d5d00;}100%{box-shadow:0 0 0 0 #ff5d5d00;}}
 
-  /* ---- right panel ---- */
+  /* ---- right panel (docked: always on screen, no slide-in) ---- */
   .panel{
     position:fixed; top:0; right:0; height:100%; width:var(--panel-w);
-    min-width:360px; max-width:520px; background:#fff; z-index:60;
+    min-width:360px; background:#fff; z-index:60;
     display:flex; flex-direction:column; box-shadow:-18px 0 50px #0009;
-    transform:translateX(105%); transition:transform .28s cubic-bezier(.4,.0,.2,1);
+    border-left:1px solid #0b0e13;
   }
-  .panel.open{transform:translateX(0);}
+  /* Docked layout — the panel is permanently visible at 1/3 width, so the
+     full-screen backdrop, the floating launcher and the close button all go. */
+  .stage, .launch, #closeBtn{ display:none !important; }
 
   .phead{display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--bg); color:#eef2f8; flex:0 0 auto;}
   .phead .title{font-weight:700; font-size:15px; letter-spacing:.3px;}
@@ -178,6 +180,9 @@
   var open=false, listening=false, stream=null, rec=null, MIME="",
       audioCtx=null, analyser=null, vadData=null, segPeak=0, vadTimer=null,
       seen={}, syncCursor=0, pollTimer=null, warnedNoStore=false;
+  // local persistence — keep the last hour of captions + answers across refresh
+  var TTL_MS=3600000, CAP_KEY="cp_caps_v1::"+(ROOM||"solo"),
+      ANS_KEY="cp_ans_v1::"+(ROOM||"solo"), capLog=[], ansLog=[];
 
   /* ---------------- mode setup ---------------- */
   if(MIRROR) document.body.classList.add("mirror");
@@ -194,6 +199,24 @@
 
   function escapeHtml(s){ return (s||"").replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function setSyncDot(ok, txt){ var d=$("syncDot"); if(d){ d.className = ok?"ok":"off"; d.textContent = txt; } }
+
+  /* ---------------- local persistence (last 1h of captions + answers) ---------------- */
+  // Stored in localStorage, namespaced by room, timestamped, and pruned to the
+  // last hour on every load and write so a page refresh keeps recent context.
+  function prune(arr){ var now=Date.now(); return (arr||[]).filter(function(x){ return x && x.t && (now-x.t)<=TTL_MS; }); }
+  function loadLog(key){ try{ var a=JSON.parse(localStorage.getItem(key)||"[]"); return Array.isArray(a)?prune(a):[]; }catch(e){ return []; } }
+  function writeLog(key, arr, cap){ try{ var a=prune(arr); if(a.length>cap) a=a.slice(a.length-cap); localStorage.setItem(key, JSON.stringify(a)); return a; }catch(e){ return arr; } }
+  function saveCaps(){ capLog=writeLog(CAP_KEY, capLog, 120); }
+  function saveAns(){ ansLog=writeLog(ANS_KEY, ansLog, 60); }
+  function restoreState(){
+    capLog=loadLog(CAP_KEY); ansLog=loadLog(ANS_KEY);
+    capLog.forEach(function(c){ addCaption(c.en||"", c.zh||"", {restore:true}); });
+    ansLog.forEach(function(a){
+      if(a && a.id) seen[a.id]=1;
+      var refs=newCard((a&&a.q)||"", !!(a&&a.remote));
+      fillCard(refs, (a&&a.en)||"", (a&&a.zh)||"", false);
+    });
+  }
 
   /* ---------------- panel open/close ---------------- */
   function setOpen(v){
@@ -329,7 +352,7 @@
     return false;
   }
 
-  function addCaption(en, zh){
+  function addCaption(en, zh, opts){
     if(liveEmpty){ liveEmpty.remove(); liveEmpty=null; }
     var q = isQuestion(en);
     var row=document.createElement("div"); row.className="cap"+(q?" q":"");
@@ -347,6 +370,7 @@
     liveEl.appendChild(row);
     liveEl.scrollTop = liveEl.scrollHeight;
     while(liveEl.children.length>60) liveEl.removeChild(liveEl.firstChild);
+    if(!(opts&&opts.restore)){ capLog.push({t:Date.now(), en:en, zh:zh}); saveCaps(); }
   }
 
   /* ---------------- answers ---------------- */
@@ -381,6 +405,7 @@
     seen[item.id]=1;
     var refs=newCard(item.q||"", true);
     fillCard(refs, item.en||"", item.zh||"");
+    ansLog.push({t:Date.now(), id:item.id, q:item.q||"", en:item.en||"", zh:item.zh||"", remote:true}); saveAns();
   }
 
   async function askQuestion(q){
@@ -398,6 +423,7 @@
       var en=(j&&j.en)||"", zh=(j&&j.zh)||"";
       fillCard(refs, en, zh);
       if(en) pushItem({ id:id, q:q, en:en, zh:zh });   // share to the other device
+      if(en){ ansLog.push({t:Date.now(), id:id, q:q, en:en, zh:zh, remote:false}); saveAns(); }
     }catch(e){
       fillCard(refs,"网络出错了，稍后再试，或直接打字提问。","",true);
     }
@@ -443,8 +469,15 @@
     }catch(e){}
   }
 
-  /* ---------------- mirror auto-open (no mic needed) ---------------- */
-  if(MIRROR){ setOpen(true); }
+  /* ---------------- docked startup (always visible at 1/3 width) ---------------- */
+  // 1) bring back up to 1h of captions + answers; 2) dock the panel (no
+  // launcher — it's permanently on screen); 3) start room sync if ?room= is set.
+  // The mic never auto-starts (no surprise permission prompt) — tap 聆听 to listen.
+  restoreState();
+  open=true;
+  panel.classList.add("open");
+  panel.setAttribute("aria-hidden","false");
+  startSync();
 })();
 </script>
 </body>
