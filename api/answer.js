@@ -7,10 +7,17 @@
 // (server-side only — never shipped to the browser, no sensitive data).
 
 const profile = require('../lib/profile');
+const auth = require('../lib/auth');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).json({ en: '', zh: '' });
+    return;
+  }
+  // Once COPILOT_PASS is set in Vercel, only logged-in clients may spend the
+  // OpenAI key. Fails OPEN when unconfigured so first-time setup still works.
+  if (auth.configured() && !auth.isAuthed(req)) {
+    res.status(401).json({ en: '', zh: '', error: 'locked' });
     return;
   }
   const key = process.env.OPENAI_API_KEY;

@@ -12,6 +12,8 @@
 // (A ~6s clip is ~30-130 KB base64 — far under Vercel's request-body cap —
 // so no body-size config is needed.)
 
+const auth = require('../lib/auth');
+
 const EXT = {
   'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/oga': 'oga',
   'audio/mp4': 'mp4', 'audio/x-m4a': 'm4a', 'audio/m4a': 'm4a',
@@ -30,6 +32,11 @@ function isNoise(t) {
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).json({ en: '', zh: '' });
+    return;
+  }
+  // Same password gate as /api/answer (fails OPEN until COPILOT_PASS is set).
+  if (auth.configured() && !auth.isAuthed(req)) {
+    res.status(401).json({ en: '', zh: '', error: 'locked' });
     return;
   }
   const key = process.env.OPENAI_API_KEY;
