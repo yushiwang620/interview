@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>面试 Co-pilot · Yushi</title>
+<style>
+  :root{
+    --bg:#0f1115; --ink:#11151c; --muted:#5b6573; --line:#e6e9ef;
+    --accent:#0e7490; --accent2:#1f8a7d; --chip:#9aa3af; --card:#ffffff;
+    --live-bg:#f6f8fb; --ans-bg:#ffffff; --good:#16a34a;
+    --panel-w: 30vw;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;height:100%;}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); background:radial-gradient(1200px 800px at 80% -10%, #18203033, transparent), #0f1115;
+    overflow:hidden;
+  }
+
+  /* ---- landing / backdrop ---- */
+  .stage{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; color:#cdd5e1; padding:6vmin; text-align:center;}
+  .stage .wrap{max-width:560px;}
+  .stage h1{font-size:clamp(22px,3.4vw,34px); margin:0 0 .35em; color:#eef2f8; letter-spacing:.5px;}
+  .stage p{margin:.4em 0; line-height:1.6; color:#9fb0c4; font-size:15px;}
+  .stage .sub{color:#6f7f93; font-size:13px; margin-top:1.4em;}
+  .stage kbd{background:#1c2430; border:1px solid #2a3543; border-radius:6px; padding:1px 7px; font-size:12px; color:#cdd5e1;}
+
+  /* ---- launcher button (top-right) ---- */
+  .launch{
+    position:fixed; top:max(14px, env(safe-area-inset-top)); right:16px; z-index:50;
+    display:inline-flex; align-items:center; gap:9px; cursor:pointer; border:0;
+    background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#fff;
+    font-size:15px; font-weight:600; padding:11px 16px; border-radius:999px;
+    box-shadow:0 8px 24px #00000055; transition:transform .15s ease, box-shadow .15s;
+  }
+  .launch:hover{transform:translateY(-1px); box-shadow:0 10px 28px #00000066;}
+  .launch .dot{width:8px;height:8px;border-radius:50%;background:#fff;opacity:.9;}
+  .launch.live .dot{background:#ff5d5d; animation:pulse 1.2s infinite;}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 #ff5d5d88;}70%{box-shadow:0 0 0 8px #ff5d5d00;}100%{box-shadow:0 0 0 0 #ff5d5d00;}}
+
+  /* ---- right panel ---- */
+  .panel{
+    position:fixed; top:0; right:0; height:100%; width:var(--panel-w);
+    min-width:360px; max-width:520px; background:#fff; z-index:60;
+    display:flex; flex-direction:column; box-shadow:-18px 0 50px #0009;
+    transform:translateX(105%); transition:transform .28s cubic-bezier(.4,.0,.2,1);
+  }
+  .panel.open{transform:translateX(0);}
+
+  .phead{display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--bg); color:#eef2f8; flex:0 0 auto;}
+  .phead .title{font-weight:700; font-size:15px; letter-spacing:.3px;}
+  .phead .title small{display:block; font-weight:400; font-size:11px; color:#8b97a8; letter-spacing:0;}
+  .phead .spacer{flex:1;}
+  .iconbtn{background:#1c2531; color:#cdd5e1; border:1px solid #2b3645; border-radius:9px; padding:7px 11px; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:6px;}
+  .iconbtn:hover{background:#243042;}
+  .iconbtn.on{background:#7a1d1d; border-color:#a33; color:#ffdede;}
+  .iconbtn.on .rec{width:8px;height:8px;border-radius:50%;background:#ff5d5d;animation:pulse 1.2s infinite;}
+  .roomtag{font-size:10.5px; color:#7d8aa0; padding:0 14px 0; margin-top:-2px;}
+  .roomtag b{color:#9fb6cc;} .roomtag .ok{color:#3fae7a;} .roomtag .off{color:#c98a3a;}
+
+  .winlabel{font-size:11px; font-weight:700; letter-spacing:.6px; color:var(--muted); text-transform:uppercase; padding:9px 14px 5px;}
+  .winlabel .hint{float:right; font-weight:400; text-transform:none; letter-spacing:0; color:#9aa3af; font-size:10.5px;}
+
+  /* live caption window */
+  .live{flex:4 1 0; min-height:90px; overflow-y:auto; background:var(--live-bg); border-top:1px solid var(--line); padding:6px 12px 10px;}
+  .cap{display:flex; gap:9px; align-items:flex-start; padding:8px 4px; border-bottom:1px solid #eef1f6;}
+  .cap .txt{flex:1; min-width:0;}
+  .cap .en{font-size:14px; line-height:1.45; color:#1a2230; word-wrap:break-word;}
+  .cap .zh{font-size:12.5px; line-height:1.4; color:#6b7686; margin-top:3px;}
+  .cap .ask{flex:0 0 auto; align-self:center; border:1px solid #cfd6df; background:#eef1f5; color:#8a93a0;
+    width:30px;height:30px;border-radius:8px;cursor:pointer;font-size:15px;display:none;align-items:center;justify-content:center;line-height:1;}
+  .cap.q .ask{display:inline-flex;}
+  .cap .ask:hover{background:var(--accent); border-color:var(--accent); color:#fff;}
+  .cap .ask.done{background:var(--good); border-color:var(--good); color:#fff;}
+  .live .empty,.answers .empty{color:#9aa3af; font-size:13px; padding:14px 6px; line-height:1.6;}
+
+  /* answers window */
+  .answers{flex:6 1 0; min-height:120px; overflow-y:auto; background:var(--ans-bg); border-top:1px solid var(--line); padding:8px 12px 12px;}
+  .acard{border:1px solid var(--line); border-radius:12px; padding:11px 12px; margin:9px 0; background:#fcfdff; box-shadow:0 2px 6px #0c1b3408;}
+  .acard.remote{background:#f7fbff; border-color:#dbe8f4;}
+  .acard .q{font-size:12px; font-weight:700; color:var(--accent); margin-bottom:7px; display:flex; gap:6px;}
+  .acard .q .qi{flex:0 0 auto; opacity:.7;}
+  .acard .en{font-size:14.5px; line-height:1.55; color:#13202e; white-space:pre-wrap;}
+  .acard .zh{font-size:13px; line-height:1.55; color:#5d6b7d; margin-top:8px; padding-top:8px; border-top:1px dashed #e4e8ee; white-space:pre-wrap;}
+  .acard.err .en{color:#b23b3b;}
+  .acard .think{display:inline-flex;gap:4px;}
+  .acard .think i{width:6px;height:6px;border-radius:50%;background:#c2cad4;animation:blink 1s infinite;}
+  .acard .think i:nth-child(2){animation-delay:.2s;} .acard .think i:nth-child(3){animation-delay:.4s;}
+  @keyframes blink{0%,100%{opacity:.3;}50%{opacity:1;}}
+
+  /* input row */
+  .composer{flex:0 0 auto; display:flex; gap:8px; padding:10px 12px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid var(--line); background:#fff;}
+  .composer input{flex:1; border:1px solid #d6dce4; border-radius:10px; padding:11px 12px; font-size:15px; outline:none;}
+  .composer input:focus{border-color:var(--accent);}
+  .composer button{flex:0 0 auto; border:0; background:var(--accent); color:#fff; font-weight:600; font-size:14px; padding:0 16px; border-radius:10px; cursor:pointer;}
+  .composer button:disabled{opacity:.5;cursor:default;}
+
+  .notice{font-size:12px; color:#9a5b00; background:#fff7e6; border-top:1px solid #f0e2c0; padding:8px 14px;}
+  .notice.err{color:#a11; background:#fff0f0; border-color:#f3caca;}
+  .notice a{color:inherit;}
+
+  /* ---- MIRROR mode (iPad): no audio, just the live answers ---- */
+  body.mirror .lbl-live, body.mirror .live, body.mirror #micBtn{ display:none !important; }
+  body.mirror .answers{ flex:1 1 auto; }
+
+  /* ---- iPad / touch: panel goes full-width ---- */
+  @media (max-width:1100px), (pointer:coarse){
+    .panel{width:100vw; min-width:0; max-width:none;}
+    .launch{font-size:16px; padding:12px 18px;}
+    .cap .en{font-size:15.5px;} .acard .en{font-size:16px;} .acard .zh{font-size:14px;}
+    .composer input{font-size:16px;} /* >=16px stops iOS zoom-on-focus */
+  }
+  @media (max-width:480px){ .live{flex:3 1 0;} }
+</style>
+</head>
+<body>
+
+  <div class="stage" id="stage">
+    <div class="wrap">
+      <h1 id="stageH1">面试 Co-pilot</h1>
+      <p id="stageP">实时把听到的英文转成字幕 + 中文对照；识别到问题点一下 <b>✓</b>，下面就用你自己的经历给出可参考的英文 / 中文答案。也可以直接在最下方打字提问。</p>
+      <p class="sub" id="stageSub">点击右上角按钮开始（首次会请求麦克风权限）。建议：电脑开本页做「主机」聆听 + 出答案，iPad 打开同一链接加 <kbd>?room=房间名&view=mirror</kbd> 当「镜像」只看答案。<br>字幕与答案由 AI 生成、有几秒延迟，仅作<strong>临场参考</strong>，照着自己的话说，别照念。</p>
+    </div>
+  </div>
+
+  <button class="launch" id="launch"><span class="dot"></span><span id="launchTxt">打开 Co-pilot</span></button>
+
+  <aside class="panel" id="panel" aria-hidden="true">
+    <div class="phead">
+      <div class="title" id="pTitle">面试 Co-pilot<small id="pSub">Yushi · 王雨施 · grounded in your real work</small></div>
+      <div class="spacer"></div>
+      <button class="iconbtn" id="micBtn" title="开关聆听"><span class="rec" style="display:none"></span><span id="micTxt">聆听</span></button>
+      <button class="iconbtn" id="closeBtn" title="收起">✕</button>
+    </div>
+    <div class="roomtag" id="roomTag" style="display:none"></div>
+
+    <div class="winlabel lbl-live">实时字幕 · Live<span class="hint" id="liveHint">英文 + 中文 · 识别到问题点 ✓</span></div>
+    <div class="live" id="live"><div class="empty" id="liveEmpty">开启聆听后，听到的话会在这里逐句出现。识别到问题的句子，右侧会出现灰色 ✓，点一下即可获取答案。</div></div>
+
+    <div class="winlabel">回答 · Answers<span class="hint">结合你的项目经历 · EN / 中文</span></div>
+    <div class="answers" id="answers"><div class="empty">问题答案会出现在这里 —— 来自 ✓ 选中的问题，或你在下面输入的问题。</div></div>
+
+    <div class="notice" id="notice" style="display:none"></div>
+
+    <div class="composer">
+      <input id="qInput" type="text" placeholder="直接打字提问，回车发送…" autocomplete="off">
+      <button id="sendBtn">发送</button>
+    </div>
+  </aside>
+
+<script>
+(function(){
+  "use strict";
+  // Same-origin Vercel functions.
+  var API_BASE = "";
+  var TRANSCRIBE = API_BASE + "/api/transcribe";
+  var ANSWER     = API_BASE + "/api/answer";
+  var SESSION    = API_BASE + "/api/session";
+  var SEG_MS = 6000;        // length of each audio segment
+  var VAD_THRESH = 6;       // skip near-silent segments (0..128)
+  var POLL_MS = 1500;       // cross-device mirror refresh
+
+  // ---- URL params: ?room=NAME enables cross-device sync; &view=mirror = iPad ----
+  var params = new URLSearchParams(location.search);
+  var ROOM   = (params.get("room") || params.get("r") || "").trim();
+  var MIRROR = params.get("view") === "mirror" || params.get("mirror") === "1";
+  if(MIRROR && !ROOM) MIRROR = false; // mirror is meaningless without a room
+
+  var $ = function(id){ return document.getElementById(id); };
+  var panel=$("panel"), launch=$("launch"), launchTxt=$("launchTxt"),
+      liveEl=$("live"), liveEmpty=$("liveEmpty"), ansEl=$("answers"),
+      micBtn=$("micBtn"), micTxt=$("micTxt"), micRec=micBtn.querySelector(".rec"),
+      closeBtn=$("closeBtn"), qInput=$("qInput"), sendBtn=$("sendBtn"),
+      noticeEl=$("notice"), roomTag=$("roomTag");
+
+  var open=false, listening=false, stream=null, rec=null, MIME="",
+      audioCtx=null, analyser=null, vadData=null, segPeak=0, vadTimer=null,
+      seen={}, syncCursor=0, pollTimer=null, warnedNoStore=false;
+
+  /* ---------------- mode setup ---------------- */
+  if(MIRROR) document.body.classList.add("mirror");
+  if(ROOM){
+    roomTag.style.display="block";
+    roomTag.innerHTML = '房间 <b>'+escapeHtml(ROOM)+'</b> · ' + (MIRROR ? '镜像（只看答案）' : '主机（聆听 + 出答案）') + ' · <span id="syncDot" class="off">同步待连接…</span>';
+  }
+  if(MIRROR){
+    $("stageH1").textContent = "面试 Co-pilot · 镜像";
+    $("stageP").textContent = "这台设备是「镜像」：电脑那边出现的问题与答案会实时同步到这里，方便你瞄一眼。本机不收声、不出声。";
+    $("stageSub").innerHTML = "点右上角按钮打开即可（已自动连到房间 <b>"+escapeHtml(ROOM)+"</b>）。也可以在最下方直接打字提问，答案两台设备都会看到。";
+    $("pSub").textContent = "镜像 · 只看答案 · 自动同步";
+  }
+
+  function escapeHtml(s){ return (s||"").replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function setSyncDot(ok, txt){ var d=$("syncDot"); if(d){ d.className = ok?"ok":"off"; d.textContent = txt; } }
+
+  /* ---------------- panel open/close ---------------- */
+  function setOpen(v){
+    open=v;
+    panel.classList.toggle("open", v);
+    panel.setAttribute("aria-hidden", v?"false":"true");
+    launchTxt.textContent = v ? "收起 Co-pilot" : "打开 Co-pilot";
+    if(v){ if(!MIRROR) startListening(); startSync(); }
+    else { stopListening(); stopSync(); }
+  }
+  launch.addEventListener("click", function(){ setOpen(!open); });
+  closeBtn.addEventListener("click", function(){ setOpen(false); });
+
+  function showNotice(msg, isErr){
+    noticeEl.style.display="block";
+    noticeEl.className = "notice" + (isErr?" err":"");
+    noticeEl.innerHTML = msg;
+  }
+  function hideNotice(){ noticeEl.style.display="none"; }
+
+  /* ---------------- mic toggle ---------------- */
+  micBtn.addEventListener("click", function(){
+    if(listening) stopListening(); else startListening();
+  });
+  function setMicUI(){
+    micBtn.classList.toggle("on", listening);
+    micRec.style.display = listening ? "inline-block" : "none";
+    micTxt.textContent = listening ? "聆听中" : "聆听";
+    launch.classList.toggle("live", listening);
+  }
+
+  function pickMime(){
+    var cands=["audio/webm;codecs=opus","audio/webm","audio/mp4","audio/aac","audio/ogg;codecs=opus","audio/ogg"];
+    if(typeof MediaRecorder==="undefined" || !MediaRecorder.isTypeSupported) return "";
+    for(var i=0;i<cands.length;i++){ if(MediaRecorder.isTypeSupported(cands[i])) return cands[i]; }
+    return "";
+  }
+
+  async function startListening(){
+    if(listening || MIRROR) return;
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder==="undefined"){
+      showNotice("这个浏览器不支持录音 —— 你仍然可以在下面打字提问。", true);
+      return;
+    }
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+      });
+    }catch(e){
+      showNotice("没拿到麦克风权限。请在浏览器里允许麦克风，或直接在下面打字提问。", true);
+      return;
+    }
+    MIME = pickMime();
+    listening=true; setMicUI(); hideNotice();
+    startVAD(stream);
+    recordSegment();
+  }
+
+  function stopListening(){
+    listening=false; setMicUI();
+    try{ if(rec && rec.state!=="inactive") rec.stop(); }catch(e){}
+    if(vadTimer){ clearInterval(vadTimer); vadTimer=null; }
+    try{ if(audioCtx) audioCtx.close(); }catch(e){} audioCtx=null;
+    if(stream){ stream.getTracks().forEach(function(t){ try{t.stop();}catch(e){} }); stream=null; }
+  }
+
+  /* ---------------- simple energy gate (skip silence) ---------------- */
+  function startVAD(s){
+    try{
+      var AC = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AC();
+      if(audioCtx.resume) audioCtx.resume();
+      var src = audioCtx.createMediaStreamSource(s);
+      analyser = audioCtx.createAnalyser(); analyser.fftSize=512;
+      vadData = new Uint8Array(analyser.fftSize);
+      src.connect(analyser);
+      vadTimer = setInterval(function(){
+        analyser.getByteTimeDomainData(vadData);
+        var peak=0;
+        for(var i=0;i<vadData.length;i++){ var v=Math.abs(vadData[i]-128); if(v>peak) peak=v; }
+        if(peak>segPeak) segPeak=peak;
+      }, 80);
+    }catch(e){ analyser=null; }
+  }
+
+  /* ---------------- segment recorder loop ---------------- */
+  function recordSegment(){
+    if(!listening || !stream) return;
+    var chunks=[]; segPeak=0;
+    try{ rec = MIME ? new MediaRecorder(stream,{mimeType:MIME}) : new MediaRecorder(stream); }
+    catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ showNotice("无法启动录音。",true); return; } }
+    rec.ondataavailable=function(e){ if(e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop=function(){
+      var hadVoice = (analyser===null) || (segPeak>=VAD_THRESH);
+      var blob = new Blob(chunks,{type: MIME||"audio/webm"});
+      if(listening) recordSegment();           // immediately start the next one
+      if(hadVoice && blob.size>1500) sendSegment(blob);
+    };
+    try{ rec.start(); }catch(e){ showNotice("无法启动录音。",true); return; }
+    setTimeout(function(){ try{ if(rec && rec.state!=="inactive") rec.stop(); }catch(e){} }, SEG_MS);
+  }
+
+  function blobToB64(blob){
+    return new Promise(function(resolve,reject){
+      var fr=new FileReader();
+      fr.onload=function(){ resolve(String(fr.result).split(",")[1]||""); };
+      fr.onerror=reject; fr.readAsDataURL(blob);
+    });
+  }
+
+  async function sendSegment(blob){
+    try{
+      var b64 = await blobToB64(blob);
+      if(!b64) return;
+      var r = await fetch(TRANSCRIBE,{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ audio:b64, mime:(MIME||"audio/webm").split(";")[0] })
+      });
+      var j = await r.json();
+      if(j && j.error==="no_key"){ showNotice("后端还没配置 OpenAI Key（Vercel 环境变量 OPENAI_API_KEY），转写暂不可用。", true); return; }
+      if(j && j.en) addCaption(j.en, j.zh||"");
+    }catch(e){ /* network blip — ignore this segment */ }
+  }
+
+  /* ---------------- caption rendering + question detection ---------------- */
+  function isQuestion(t){
+    var s=(t||"").trim().toLowerCase();
+    if(!s) return false;
+    if(/[?？]\s*$/.test(s)) return true;
+    if(/(^|\s)(what|why|how|when|where|who|whom|whose|which)\b/.test(s)) return true;
+    if(/(^|\s)(can|could|would|will|do|does|did|are|is|was|were|have|has|should|may|tell me|walk me|describe|explain|talk about|give me an example|how about)\b/.test(s.split(/\s+/).slice(0,4).join(" "))) return true;
+    if(/(吗|呢|为什么|如何|怎么|怎样|是否|能不能|可不可以|介绍一下|说说|讲讲|谈谈)/.test(t)) return true;
+    return false;
+  }
+
+  function addCaption(en, zh){
+    if(liveEmpty){ liveEmpty.remove(); liveEmpty=null; }
+    var q = isQuestion(en);
+    var row=document.createElement("div"); row.className="cap"+(q?" q":"");
+    var txt=document.createElement("div"); txt.className="txt";
+    var e=document.createElement("div"); e.className="en"; e.textContent=en;
+    txt.appendChild(e);
+    if(zh){ var z=document.createElement("div"); z.className="zh"; z.textContent=zh; txt.appendChild(z); }
+    var ask=document.createElement("button"); ask.className="ask"; ask.title="把这句作为问题获取回答"; ask.textContent="✓";
+    ask.addEventListener("click", function(){
+      if(ask.classList.contains("done")) return;
+      ask.classList.add("done");
+      askQuestion(en);
+    });
+    row.appendChild(txt); row.appendChild(ask);
+    liveEl.appendChild(row);
+    liveEl.scrollTop = liveEl.scrollHeight;
+    while(liveEl.children.length>60) liveEl.removeChild(liveEl.firstChild);
+  }
+
+  /* ---------------- answers ---------------- */
+  var ansEmptyRemoved=false;
+  function clearAnsEmpty(){ if(!ansEmptyRemoved){ var em=ansEl.querySelector(".empty"); if(em) em.remove(); ansEmptyRemoved=true; } }
+  function newCard(q, remote){
+    clearAnsEmpty();
+    var card=document.createElement("div"); card.className="acard loading"+(remote?" remote":"");
+    var qd=document.createElement("div"); qd.className="q";
+    qd.innerHTML='<span class="qi">'+(remote?"↔":"Q")+'</span>'; var qt=document.createElement("span"); qt.textContent=q; qd.appendChild(qt);
+    var en=document.createElement("div"); en.className="en";
+    en.innerHTML='<span class="think"><i></i><i></i><i></i></span>';
+    var zh=document.createElement("div"); zh.className="zh"; zh.style.display="none";
+    card.appendChild(qd); card.appendChild(en); card.appendChild(zh);
+    ansEl.appendChild(card);
+    ansEl.scrollTop=ansEl.scrollHeight;
+    return {card:card, en:en, zh:zh};
+  }
+  function fillCard(refs, en, zh, isErr){
+    refs.card.classList.remove("loading");
+    if(isErr) refs.card.classList.add("err");
+    refs.en.textContent = en || "(没拿到回答，换个说法或直接打字试试。)";
+    if(zh){ refs.zh.style.display="block"; refs.zh.textContent=zh; }
+    ansEl.scrollTop=ansEl.scrollHeight;
+  }
+
+  function newId(){ return "q"+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+
+  // Render an item that arrived from the other device (already answered).
+  function renderRemote(item){
+    if(!item || !item.id || seen[item.id]) return;
+    seen[item.id]=1;
+    var refs=newCard(item.q||"", true);
+    fillCard(refs, item.en||"", item.zh||"");
+  }
+
+  async function askQuestion(q){
+    q=(q||"").trim(); if(!q) return;
+    var id=newId(); seen[id]=1;            // mark mine so the poll echo is ignored
+    var refs=newCard(q,false);
+    try{
+      var r=await fetch(ANSWER,{
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ question:q })
+      });
+      var j=await r.json();
+      if(j && j.error==="no_key"){ fillCard(refs,"后端还没配置 OpenAI Key（Vercel 环境变量 OPENAI_API_KEY）。","",true); showNotice("后端还没配置 OPENAI_API_KEY，无法生成答案。", true); return; }
+      if(j && j.error){ fillCard(refs,"模型返回错误："+j.error,"",true); showNotice("模型出错（可能是 OPENAI_MODEL 名称不对或不支持该参数）："+escapeHtml(String(j.error)), true); return; }
+      var en=(j&&j.en)||"", zh=(j&&j.zh)||"";
+      fillCard(refs, en, zh);
+      if(en) pushItem({ id:id, q:q, en:en, zh:zh });   // share to the other device
+    }catch(e){
+      fillCard(refs,"网络出错了，稍后再试，或直接打字提问。","",true);
+    }
+  }
+
+  /* ---------------- typed input ---------------- */
+  function submitTyped(){
+    var q=(qInput.value||"").trim(); if(!q) return;
+    qInput.value=""; askQuestion(q);
+  }
+  sendBtn.addEventListener("click", submitTyped);
+  qInput.addEventListener("keydown", function(e){ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); submitTyped(); } });
+
+  /* ---------------- cross-device sync (room) ---------------- */
+  function startSync(){
+    if(!ROOM || pollTimer) return;
+    pollRoom();                       // immediate first pull (loads backlog)
+    pollTimer=setInterval(pollRoom, POLL_MS);
+  }
+  function stopSync(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+
+  async function pollRoom(){
+    if(!ROOM) return;
+    try{
+      var r=await fetch(SESSION+"?room="+encodeURIComponent(ROOM)+"&since="+syncCursor);
+      var j=await r.json();
+      if(j && j.ok===false && j.error==="no_store"){
+        setSyncDot(false,"同步未配置");
+        if(!warnedNoStore){ warnedNoStore=true; showNotice("跨设备同步未配置：在 Vercel 给项目接一个 Upstash(Redis) 数据库即可。<b>本机仍可正常使用</b>，只是两台设备不互通。", false); }
+        stopSync(); return;
+      }
+      setSyncDot(true,"已同步");
+      if(j && j.items && j.items.length){ j.items.forEach(renderRemote); }
+      if(j && typeof j.cursor==="number"){ syncCursor=j.cursor; }
+    }catch(e){ setSyncDot(false,"同步重连中…"); }
+  }
+
+  async function pushItem(item){
+    if(!ROOM) return;
+    try{
+      await fetch(SESSION,{ method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ room:ROOM, item:item }) });
+    }catch(e){}
+  }
+
+  /* ---------------- mirror auto-open (no mic needed) ---------------- */
+  if(MIRROR){ setOpen(true); }
+})();
+</script>
+</body>
+</html>

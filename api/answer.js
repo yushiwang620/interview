@@ -1,0 +1,76 @@
+// Vercel Serverless Function — interview co-pilot answer engine.
+// POST { question } -> { en, zh }  (bilingual spoken interview answer)
+// The OpenAI key lives ONLY here, as a Vercel Environment Variable
+// (Project -> Settings -> Environment Variables -> OPENAI_API_KEY).
+// Same-origin with the site (/api/answer) so no CORS is needed.
+// Knowledge, persona and truthfulness guardrails come from lib/profile.js
+// (server-side only — never shipped to the browser, no sensitive data).
+
+const profile = require('../lib/profile');
+
+module.exports = async (req, res) => {
+  if (req.method !== 'POST') {
+    res.status(405).json({ en: '', zh: '' });
+    return;
+  }
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) {
+    res.status(200).json({ en: '', zh: '', error: 'no_key' });
+    return;
+  }
+  try {
+    let body = req.body;
+    if (!body || typeof body === 'string') {
+      try { body = JSON.parse(body || '{}'); } catch (e) { body = {}; }
+    }
+    const question = (body.question || body.q || '').toString().trim();
+    if (!question) {
+      res.status(200).json({ en: '', zh: '' });
+      return;
+    }
+    // Model is set via the OPENAI_MODEL env var in Vercel (default gpt-5.5),
+    // so you can change models without editing/redeploying code.
+    const model = body.model || process.env.OPENAI_MODEL || 'gpt-5.5';
+
+    const messages = [
+      { role: 'system', content: profile.systemPrompt() },
+      { role: 'user', content: 'Interview question just asked:\n"' + question + '"\n\nDraft my answer now as the JSON object {"en","zh"}.' }
+    ];
+
+    const r = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + key
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: messages,
+        temperature: 0.5,
+        response_format: { type: 'json_object' }
+      })
+    });
+    const j = await r.json();
+    // Surface the real OpenAI error (e.g. wrong model name or unsupported
+    // param) so a dry run shows WHY instead of failing silently.
+    if (j && j.error) {
+      res.status(200).json({ en: '', zh: '', error: (j.error.message || 'api_error') });
+      return;
+    }
+    const raw =
+      (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+
+    let en = '', zh = '';
+    try {
+      const parsed = JSON.parse(raw);
+      en = (parsed.en || parsed.EN || '').toString().trim();
+      zh = (parsed.zh || parsed.ZH || parsed.cn || '').toString().trim();
+    } catch (e) {
+      // Model didn't return clean JSON — fall back to using the raw text as EN.
+      en = raw.trim();
+    }
+    res.status(200).json({ en: en, zh: zh });
+  } catch (e) {
+    res.status(200).json({ en: '', zh: '', error: 'exception' });
+  }
+};
