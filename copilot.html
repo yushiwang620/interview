@@ -86,6 +86,11 @@
     font-size:13px; line-height:1; display:none; align-items:center; justify-content:center; z-index:2;}
   .cap:not(:first-child) .join{display:inline-flex;}
   .cap .join:hover{background:var(--accent); border-color:var(--accent); color:#fff;}
+  /* live partial line: what we're hearing right now, before the sentence is final */
+  .cap.interim{opacity:.85;}
+  .cap.interim .en{color:#5b6675; font-style:italic;}
+  .cap.interim .zh{color:#8a93a0; font-style:italic;}
+  .cap .livedot{flex:0 0 auto; align-self:center; width:8px; height:8px; border-radius:50%; background:var(--accent); animation:pulse 1.2s infinite;}
   .live .empty,.answers .empty{color:#9aa3af; font-size:13px; padding:14px 6px; line-height:1.6;}
 
   /* answers window */
@@ -183,6 +188,18 @@
   var MAX_UTTER_MS = 18000; // hard cap so a non-stop talker still flushes
   var TICK_MS = 80;         // energy-poll interval
   var POLL_MS = 1500;       // cross-device mirror refresh
+  var MIN_VOICE_MS = 320;   // a take must hold at least this much real voice before it's sent — kills silence-only blobs
+  var INTERIM_MS = 900;     // how often to refresh the live partial while the speaker is still going
+  var INTERIM_SLICE = 800;  // MediaRecorder timeslice, so audio streams in for the live partial
+
+  // Whisper "fills" near-silent / low-content audio with stock outro lines it saw a
+  // million times in training ("Thank you for watching", "Bye", "Please subscribe"…).
+  // Drop these (normalized, punctuation-stripped) so they never reach the screen.
+  var HALLUC = {"you":1,"thank you":1,"thanks":1,"thank you very much":1,"thank you so much":1,
+    "thank you for watching":1,"thanks for watching":1,"thank you for watching this video":1,
+    "please subscribe":1,"subscribe":1,"bye":1,"bye bye":1,"goodbye":1,"good bye":1,
+    "see you":1,"see you next time":1,"see you later":1,"see you in the next video":1,
+    "thanks for watching everyone":1,"thank you all":1,"thank you everyone":1,"okay":1,"ok":1};
 
   // ---- URL params: ?room=NAME enables cross-device sync; &view=mirror = iPad ----
   var params = new URLSearchParams(location.search);
@@ -199,7 +216,8 @@
 
   var open=false, listening=false, stream=null, rec=null, MIME="",
       audioCtx=null, analyser=null, vadData=null, vadTimer=null,
-      uttChunks=[], uttStart=0, lastVoiceAt=0, heardVoice=false, ending=false,
+      uttChunks=[], uttStart=0, lastVoiceAt=0, heardVoice=false, ending=false, voicedMs=0,
+      uttId=0, uttSeq=0, interimAt=0, interimBusy=false, uttRow=null,
       seen={}, syncCursor=0, pollTimer=null, warnedNoStore=false;
   // local persistence — keep the last hour of captions + answers across refresh
   var TTL_MS=3600000, CAP_KEY="cp_caps_v1::"+(ROOM||"solo"),
@@ -231,7 +249,7 @@
   function liveEmptyHtml(){ return "开启聆听后，听到的话会在这里逐句出现。识别到问题的句子，右侧会出现灰色 ✓，点一下即可获取答案。"; }
   function ansEmptyHtml(){ return "问题答案会出现在这里 —— 来自 ✓ 选中的问题，或你在下面输入的问题。"; }
   function clearHistory(opts){
-    capLog=[]; ansLog=[]; seen={}; ansEmptyRemoved=false;
+    capLog=[]; ansLog=[]; seen={}; ansEmptyRemoved=false; uttRow=null;
     try{ localStorage.removeItem(CAP_KEY); localStorage.removeItem(ANS_KEY); }catch(e){}
     liveEl.innerHTML = '<div class="empty" id="liveEmpty">'+liveEmptyHtml()+'</div>';
     liveEmpty = $("liveEmpty");
@@ -365,7 +383,12 @@
       analyser.getByteTimeDomainData(vadData);
       var peak=0;
       for(var i=0;i<vadData.length;i++){ var v=Math.abs(vadData[i]-128); if(v>peak) peak=v; }
-      if(peak>=VAD_THRESH){ heardVoice=true; lastVoiceAt=now; }
+      if(peak>=VAD_THRESH){ heardVoice=true; lastVoiceAt=now; voicedMs+=TICK_MS; }
+      // once it's clearly real speech, show a live line and keep refreshing the partial
+      if(voicedMs>=MIN_VOICE_MS){
+        if(!uttRow) showInterimRow();
+        if((now-interimAt)>=INTERIM_MS) runInterim();
+      }
     }
     var dur = now - uttStart;
     if(analyser && heardVoice){
@@ -378,13 +401,16 @@
   /* ----- utterance recorder: one continuous take per spoken question ----- */
   function beginUtterance(){
     if(!listening || !stream) return;
-    uttChunks=[]; heardVoice=false; ending=false;
-    uttStart=Date.now(); lastVoiceAt=uttStart;
+    uttChunks=[]; heardVoice=false; ending=false; voicedMs=0; uttRow=null;
+    uttStart=Date.now(); lastVoiceAt=uttStart; interimAt=uttStart;
+    uttId++; uttSeq=0;
     try{ rec = MIME ? new MediaRecorder(stream,{mimeType:MIME}) : new MediaRecorder(stream); }
     catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ showNotice("无法启动录音。",true); return; } }
     rec.ondataavailable=function(e){ if(e.data && e.data.size) uttChunks.push(e.data); };
     rec.onstop=flushUtterance;
-    try{ rec.start(); }catch(e){ showNotice("无法启动录音。",true); return; }
+    // timeslice only when we have the analyser to drive partials; otherwise one blob at stop
+    try{ if(analyser) rec.start(INTERIM_SLICE); else rec.start(); }
+    catch(e){ try{ rec.start(); }catch(e2){ showNotice("无法启动录音。",true); return; } }
   }
 
   function endUtterance(){
@@ -393,10 +419,59 @@
   }
 
   function flushUtterance(){
-    var send = (analyser===null) || heardVoice;
+    // require real voice (not just a noise blip) so silence never gets transcribed
+    var hadVoice = (analyser===null) || (voicedMs>=MIN_VOICE_MS);
     var blob = new Blob(uttChunks,{type: MIME||"audio/webm"});
+    var myId=uttId, myRow=uttRow;
     if(listening) beginUtterance();          // immediately start the next take
-    if(send && blob.size>1500) sendSegment(blob);
+    if(!hadVoice || blob.size<1500){ if(myRow) myRow.remove(); return; }
+    finalizeUtterance(blob, myId, myRow);
+  }
+
+  /* --------- live partial line: shown while speaking, promoted on end --------- */
+  function showInterimRow(){
+    if(liveEmpty){ liveEmpty.remove(); liveEmpty=null; }
+    var row=document.createElement("div"); row.className="cap interim"; row._seq=0;
+    var txt=document.createElement("div"); txt.className="txt";
+    var e=document.createElement("div"); e.className="en"; e.textContent="…";
+    var z=document.createElement("div"); z.className="zh"; z.style.display="none";
+    txt.appendChild(e); txt.appendChild(z);
+    var dot=document.createElement("span"); dot.className="livedot"; dot.title="正在聆听…";
+    row.appendChild(txt); row.appendChild(dot);
+    liveEl.appendChild(row);
+    liveEl.scrollTop=liveEl.scrollHeight;
+    uttRow=row;
+  }
+
+  // Re-transcribe the audio gathered so far and refresh the live line. At most one
+  // request is in flight at a time; stale results (older utterance / older seq) drop.
+  function runInterim(){
+    if(interimBusy || !uttChunks.length) return;
+    interimBusy=true; interimAt=Date.now();
+    var myId=uttId, mySeq=++uttSeq, myRow=uttRow;
+    transcribeBlob(new Blob(uttChunks,{type:MIME||"audio/webm"})).then(function(j){
+      interimBusy=false;
+      if(myId!==uttId || !myRow || myRow!==uttRow) return;   // utterance already ended
+      if(mySeq < (myRow._seq||0)) return;                    // a newer partial already landed
+      if(!j || !j.en || isHallucination(j.en)) return;
+      myRow._seq=mySeq;
+      var e=myRow.querySelector(".en"), z=myRow.querySelector(".zh");
+      if(e) e.textContent=j.en;
+      if(z){ if(j.zh){ z.textContent=j.zh; z.style.display="block"; } else { z.style.display="none"; } }
+      liveEl.scrollTop=liveEl.scrollHeight;
+    }, function(){ interimBusy=false; });
+  }
+
+  // Final pass on the whole utterance — most accurate. Promotes the live line in
+  // place (keeps order) into a normal ✓-able caption, or drops it if it's nothing.
+  function finalizeUtterance(blob, myId, myRow){
+    transcribeBlob(blob).then(function(j){
+      if(j && j.error==="no_key"){ if(myRow) myRow.remove(); showNotice("后端还没配置 OpenAI Key（Vercel 环境变量 OPENAI_API_KEY），转写暂不可用。", true); return; }
+      var en=(j&&j.en)||"", zh=(j&&j.zh)||"";
+      if(!en || isHallucination(en)){ if(myRow) myRow.remove(); return; }
+      if(myRow) promoteRow(myRow, en, zh);
+      else addCaption(en, zh);
+    }, function(){ if(myRow) myRow.remove(); });
   }
 
   function blobToB64(blob){
@@ -407,18 +482,16 @@
     });
   }
 
-  async function sendSegment(blob){
-    try{
-      var b64 = await blobToB64(blob);
-      if(!b64) return;
-      var r = await fetch(TRANSCRIBE,{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ audio:b64, mime:(MIME||"audio/webm").split(";")[0] })
-      });
-      var j = await r.json();
-      if(j && j.error==="no_key"){ showNotice("后端还没配置 OpenAI Key（Vercel 环境变量 OPENAI_API_KEY），转写暂不可用。", true); return; }
-      if(j && j.en) addCaption(j.en, j.zh||"");
-    }catch(e){ /* network blip — ignore this segment */ }
+  // Shared transcribe core: blob -> {en, zh} (or {error}). Used by both the live
+  // partial pass and the final per-utterance pass.
+  async function transcribeBlob(blob){
+    var b64 = await blobToB64(blob);
+    if(!b64) return null;
+    var r = await fetch(TRANSCRIBE,{
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ audio:b64, mime:(MIME||"audio/webm").split(";")[0] })
+    });
+    return await r.json();
   }
 
   /* ---------------- caption rendering + question detection ---------------- */
@@ -432,14 +505,23 @@
     return false;
   }
 
-  function addCaption(en, zh, opts){
-    if(liveEmpty){ liveEmpty.remove(); liveEmpty=null; }
-    opts = opts || {};
-    var id = opts.id || newId();
-    var t  = opts.t  || Date.now();
+  // True for empty text or a known Whisper "silence filler" line, so it never shows.
+  function isHallucination(en){
+    var s=(en||"").toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim();
+    if(!s) return true;
+    if(HALLUC[s]) return true;
+    if(/^(thank you for watching|thanks for watching|please subscribe|subscribe to|don t forget to subscribe|see you in the next|thank you for joining|thanks for joining)/.test(s)) return true;
+    return false;
+  }
+
+  // Build (or rebuild, in place) a finished caption row: "+" merge button, EN + 中,
+  // and the ✓ that sends the current text to the model. Shared by fresh captions
+  // and by promoting a live partial line so it keeps its on-screen position.
+  function buildCap(row, en, zh, id, t){
     var q = isQuestion(en);
-    var row=document.createElement("div"); row.className="cap"+(q?" q":"");
-    row.dataset.id = id; row.dataset.t = String(t);
+    row.className = "cap"+(q?" q":"");
+    row.dataset.id = id; row.dataset.t = String(t); row._seq = 0;
+    row.innerHTML = "";
 
     // "+" on the divider above this row: fold it up into the previous caption,
     // so a question split across a pause becomes one sentence with one ✓.
@@ -460,10 +542,29 @@
       askQuestion(e.textContent);           // send the CURRENT (possibly merged) text
     });
     row.appendChild(txt); row.appendChild(ask);
+  }
+
+  function addCaption(en, zh, opts){
+    if(liveEmpty){ liveEmpty.remove(); liveEmpty=null; }
+    opts = opts || {};
+    var id = opts.id || newId();
+    var t  = opts.t  || Date.now();
+    var row=document.createElement("div");
+    buildCap(row, en, zh, id, t);
     liveEl.appendChild(row);
     liveEl.scrollTop = liveEl.scrollHeight;
     while(liveEl.children.length>60) liveEl.removeChild(liveEl.firstChild);
     if(!opts.restore){ capLog.push({t:t, en:en, zh:zh, id:id}); saveCaps(); }
+  }
+
+  // Turn an in-progress live line into a finished caption *in place* (preserves
+  // order relative to a later utterance's live line that may already be below it).
+  function promoteRow(row, en, zh){
+    var id=newId(), t=Date.now();
+    buildCap(row, en, zh, id, t);
+    liveEl.scrollTop = liveEl.scrollHeight;
+    while(liveEl.children.length>60) liveEl.removeChild(liveEl.firstChild);
+    capLog.push({t:t, en:en, zh:zh, id:id}); saveCaps();
   }
 
   function capIndexById(id){ for(var i=0;i<capLog.length;i++){ if(capLog[i].id===id) return i; } return -1; }
