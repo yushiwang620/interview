@@ -45,12 +45,13 @@
   /* restore handle — teal, pinned to the right edge, shown only when the co-pilot is collapsed */
   #expandCopilot {
     right: 0; border: 1px solid #2b3645; border-right: 0; border-radius: 12px 0 0 12px;
-    background: linear-gradient(135deg, #0e7490, #1f8a7d); color: #fff;
+    background: #11212c; color: #cdd9e0;
   }
+  #expandCopilot:hover { background: #1b3340; color: #fff; filter: none; }
   #app.split-collapsed #expandCopilot { display: flex; }
   /* collapse handle — navy (matches the doc's nav button), sits at the pane seam, shown only when expanded */
   #collapseCopilot {
-    left: 50%; border: 1px solid #2b3645; border-left: 0; border-radius: 0 12px 12px 0;
+    left: 50%; border: 1px solid #2b3645; border-right: 0; border-radius: 12px 0 0 12px;
     background: #11212c; color: #cdd9e0;
   }
   #collapseCopilot:hover { background: #1b3340; color: #fff; filter: none; }
@@ -202,7 +203,10 @@
   function positionCollapse() {
     var right = document.getElementById('rightPane');
     if (!collapseCopilot || !right) return;
-    collapseCopilot.style.left = right.getBoundingClientRect().left + 'px';
+    // Sit the handle just OUTSIDE the right pane (its right edge meets the seam), so it
+    // never overlaps the co-pilot's answer text.
+    var w = collapseCopilot.offsetWidth || 34;
+    collapseCopilot.style.left = (right.getBoundingClientRect().left - w) + 'px';
   }
   function applySplit(ratio) {
     ratio = normalizeSplit(ratio);
