@@ -139,6 +139,7 @@
       <div class="splitctl" id="splitCtl" role="group" aria-label="布局">
         <button class="splitbtn" id="split11" type="button" data-ratio="1:1" title="左右各占一半">1:1</button>
         <button class="splitbtn" id="split31" type="button" data-ratio="3:1" title="右侧占四分之一">3:1</button>
+        <button class="splitbtn" id="split10" type="button" data-ratio="1:0" title="收起右侧助手">1:0</button>
       </div>
       <div class="spacer"></div>
       <button class="iconbtn" id="clearBtn" title="清空实时翻译和问 AI 记录">↻</button>
@@ -250,13 +251,27 @@
 
   /* -------- layout split (1:1 / 3:1) — controls the parent shell's pane width -------- */
   // localStorage is shared with the parent shell (same origin), so the choice sticks.
-  var SPLIT_KEY="cp_split_v1", split11=$("split11"), split31=$("split31");
-  function getSplit(){ var v; try{ v=localStorage.getItem(SPLIT_KEY); }catch(e){} return (v==="3:1")?"3:1":"1:1"; }
-  function markSplit(r){ if(split11) split11.classList.toggle("on", r==="1:1"); if(split31) split31.classList.toggle("on", r==="3:1"); }
+  var SPLIT_KEY="cp_split_v1", split11=$("split11"), split31=$("split31"), split10=$("split10");
+  function normalizeSplit(r){ return (r==="3:1" || r==="1:0") ? r : "1:1"; }
+  function getSplit(){ var v; try{ v=localStorage.getItem(SPLIT_KEY); }catch(e){} return normalizeSplit(v); }
+  function markSplit(r){
+    r=normalizeSplit(r);
+    if(split11) split11.classList.toggle("on", r==="1:1");
+    if(split31) split31.classList.toggle("on", r==="3:1");
+    if(split10) split10.classList.toggle("on", r==="1:0");
+  }
   function sendSplit(r){ try{ if(window.parent && window.parent!==window) window.parent.postMessage({type:"cp-layout", ratio:r}, location.origin); }catch(e){} }
-  function setSplit(r){ r=(r==="3:1")?"3:1":"1:1"; try{ localStorage.setItem(SPLIT_KEY, r); }catch(e){} markSplit(r); sendSplit(r); }
+  function setSplit(r){ r=normalizeSplit(r); try{ localStorage.setItem(SPLIT_KEY, r); }catch(e){} markSplit(r); sendSplit(r); }
   if(split11) split11.addEventListener("click", function(){ setSplit("1:1"); });
   if(split31) split31.addEventListener("click", function(){ setSplit("3:1"); });
+  if(split10) split10.addEventListener("click", function(){ setSplit("1:0"); });
+  window.addEventListener("message", function(e){
+    if(e.origin !== location.origin) return;
+    if(e.data && e.data.type === "cp-layout-set") markSplit(e.data.ratio);
+  });
+  window.addEventListener("storage", function(e){
+    if(e.key === SPLIT_KEY) markSplit(e.newValue);
+  });
   markSplit(getSplit()); sendSplit(getSplit());   // sync button highlight + tell the shell on load
 
   function showNotice(msg, isErr){

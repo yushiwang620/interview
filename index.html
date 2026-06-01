@@ -35,6 +35,18 @@
   #leftPane { flex: 0 0 50%; }
   #rightPane { flex: 1; }
   .divider { flex: 0 0 1px; background: var(--line); }
+  .collapseHandle {
+    position: fixed; right: 0; top: 50%; transform: translateY(-50%);
+    z-index: 20; width: 34px; height: 72px; display: none;
+    align-items: center; justify-content: center; cursor: pointer;
+    border: 1px solid #2b3645; border-right: 0; border-radius: 12px 0 0 12px;
+    background: linear-gradient(135deg, #0e7490, #1f8a7d); color: #fff;
+    font-size: 26px; font-weight: 800; line-height: 1; box-shadow: 0 8px 28px rgba(0,0,0,.35);
+  }
+  .collapseHandle:hover { filter: brightness(1.08); }
+  #app.split-collapsed .collapseHandle { display: flex; }
+  #app.split-collapsed #rightPane { flex: 0 0 0 !important; width: 0; overflow: hidden; }
+  #app.split-collapsed #divider { display: none; }
 
   @media (max-width: 760px) {
     .panes { flex-direction: column; }
@@ -62,6 +74,7 @@
       <div class="divider" id="divider"></div>
       <div class="pane" id="rightPane"></div>
     </div>
+    <button class="collapseHandle" id="expandCopilot" type="button" title="展开实时助手">&lt;</button>
   </div>
 
 <script>
@@ -72,6 +85,7 @@
   var pw = document.getElementById('pw');
   var btn = document.getElementById('enterBtn');
   var msg = document.getElementById('loginMsg');
+  var expandCopilot = document.getElementById('expandCopilot');
 
   function showLogin(text, cls) {
     appEl.classList.remove('show');
@@ -153,25 +167,41 @@
       .catch(function () { btn.disabled = false; showLogin('网络错误，请重试。', 'err'); });
   });
 
-  // ---------- pane split presets (1:1 / 3:1) ----------
-  // The co-pilot iframe posts {type:'cp-layout', ratio} when its 1:1 / 3:1
-  // buttons are tapped. No freeform dragging — only these two preset widths:
-  //   1:1 -> left 50% / right 50%   ·   3:1 -> left 75% / right 25%.
+  // ---------- pane split presets (1:1 / 3:1 / 1:0) ----------
+  // The co-pilot iframe posts {type:'cp-layout', ratio} when its layout buttons
+  // are tapped. No freeform dragging — only these preset widths:
+  //   1:1 -> left 50% / right 50%   ·   3:1 -> left 75% / right 25%
+  //   1:0 -> left 100% / right collapsed, with a small restore handle.
   var SPLIT_KEY = 'cp_split_v1';
+  function normalizeSplit(ratio) {
+    return (ratio === '3:1' || ratio === '1:0') ? ratio : '1:1';
+  }
   function getSplit() {
     var v; try { v = localStorage.getItem(SPLIT_KEY); } catch (e) {}
-    return (v === '3:1') ? '3:1' : '1:1';
+    return normalizeSplit(v);
+  }
+  function tellCopilot(ratio) {
+    var right = document.getElementById('rightPane');
+    var frame = right && right.querySelector('iframe');
+    try { if (frame && frame.contentWindow) frame.contentWindow.postMessage({ type: 'cp-layout-set', ratio: ratio }, location.origin); } catch (e) {}
   }
   function applySplit(ratio) {
-    ratio = (ratio === '3:1') ? '3:1' : '1:1';
+    ratio = normalizeSplit(ratio);
     try { localStorage.setItem(SPLIT_KEY, ratio); } catch (e) {}
     var left = document.getElementById('leftPane');
-    if (left) left.style.flex = (ratio === '3:1') ? '0 0 75%' : '0 0 50%';
+    var right = document.getElementById('rightPane');
+    appEl.classList.toggle('split-collapsed', ratio === '1:0');
+    if (left) left.style.flex = (ratio === '1:0') ? '1 1 100%' : ((ratio === '3:1') ? '0 0 75%' : '0 0 50%');
+    if (right) right.style.flex = (ratio === '1:0') ? '0 0 0' : '1';
+    tellCopilot(ratio);
   }
   window.addEventListener('message', function (e) {
     if (e.origin !== location.origin) return;
     if (e.data && e.data.type === 'cp-layout') applySplit(e.data.ratio);
   });
+  if (expandCopilot) {
+    expandCopilot.addEventListener('click', function () { applySplit('3:1'); });
+  }
 
   check();
 })();
