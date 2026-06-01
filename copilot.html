@@ -72,7 +72,7 @@
 
   /* live caption window */
   .live{flex:4 1 0; min-height:90px; overflow-y:auto; background:var(--live-bg); border-top:1px solid var(--line); padding:6px 12px 10px;}
-  .cap{display:flex; gap:9px; align-items:flex-start; padding:8px 4px; border-bottom:1px solid #eef1f6;}
+  .cap{display:flex; gap:9px; align-items:flex-start; padding:8px 4px; border-bottom:1px solid #eef1f6; position:relative;}
   .cap .txt{flex:1; min-width:0;}
   .cap .en{font-size:14px; line-height:1.45; color:#1a2230; word-wrap:break-word;}
   .cap .zh{font-size:12.5px; line-height:1.4; color:#6b7686; margin-top:3px;}
@@ -81,6 +81,11 @@
   .cap.q .ask{display:inline-flex;}
   .cap .ask:hover{background:var(--accent); border-color:var(--accent); color:#fff;}
   .cap .ask.done{background:var(--good); border-color:var(--good); color:#fff;}
+  .cap .join{position:absolute; top:-8px; left:50%; transform:translateX(-50%); width:22px; height:16px;
+    padding:0; border:1px solid #cfd6df; background:#fff; color:#8a93a0; border-radius:8px; cursor:pointer;
+    font-size:13px; line-height:1; display:none; align-items:center; justify-content:center; z-index:2;}
+  .cap:not(:first-child) .join{display:inline-flex;}
+  .cap .join:hover{background:var(--accent); border-color:var(--accent); color:#fff;}
   .live .empty,.answers .empty{color:#9aa3af; font-size:13px; padding:14px 6px; line-height:1.6;}
 
   /* answers window */
@@ -170,8 +175,13 @@
   var TRANSCRIBE = API_BASE + "/api/transcribe";
   var ANSWER     = API_BASE + "/api/answer";
   var SESSION    = API_BASE + "/api/session";
-  var SEG_MS = 6000;        // length of each audio segment
-  var VAD_THRESH = 6;       // skip near-silent segments (0..128)
+  // Utterance endpointing: keep ONE recording open while the speaker is talking
+  // and only close it after a real pause, so a slowly-spoken question stays a
+  // single caption instead of being chopped on a fixed timer.
+  var VAD_THRESH = 6;       // peak above this (0..128) counts as voice
+  var SILENCE_MS = 1100;    // trailing quiet that marks end-of-utterance
+  var MAX_UTTER_MS = 18000; // hard cap so a non-stop talker still flushes
+  var TICK_MS = 80;         // energy-poll interval
   var POLL_MS = 1500;       // cross-device mirror refresh
 
   // ---- URL params: ?room=NAME enables cross-device sync; &view=mirror = iPad ----
@@ -188,7 +198,8 @@
       noticeEl=$("notice"), roomTag=$("roomTag");
 
   var open=false, listening=false, stream=null, rec=null, MIME="",
-      audioCtx=null, analyser=null, vadData=null, segPeak=0, vadTimer=null,
+      audioCtx=null, analyser=null, vadData=null, vadTimer=null,
+      uttChunks=[], uttStart=0, lastVoiceAt=0, heardVoice=false, ending=false,
       seen={}, syncCursor=0, pollTimer=null, warnedNoStore=false;
   // local persistence — keep the last hour of captions + answers across refresh
   var TTL_MS=3600000, CAP_KEY="cp_caps_v1::"+(ROOM||"solo"),
@@ -229,7 +240,7 @@
   }
   function restoreState(){
     capLog=loadLog(CAP_KEY); ansLog=loadLog(ANS_KEY);
-    capLog.forEach(function(c){ addCaption(c.en||"", c.zh||"", {restore:true}); });
+    capLog.forEach(function(c){ if(!c.id) c.id=newId(); addCaption(c.en||"", c.zh||"", {restore:true, id:c.id, t:c.t}); });
     ansLog.forEach(function(a){
       if(a && a.id) seen[a.id]=1;
       var refs=newCard((a&&a.q)||"", !!(a&&a.remote));
@@ -319,8 +330,8 @@
     }
     MIME = pickMime();
     listening=true; setMicUI(); hideNotice();
-    startVAD(stream);
-    recordSegment();
+    startEnergy(stream);
+    beginUtterance();
   }
 
   function stopListening(){
@@ -331,8 +342,8 @@
     if(stream){ stream.getTracks().forEach(function(t){ try{t.stop();}catch(e){} }); stream=null; }
   }
 
-  /* ---------------- simple energy gate (skip silence) ---------------- */
-  function startVAD(s){
+  /* --------- energy monitor: drives end-of-utterance detection --------- */
+  function startEnergy(s){
     try{
       var AC = window.AudioContext || window.webkitAudioContext;
       audioCtx = new AC();
@@ -341,30 +352,51 @@
       analyser = audioCtx.createAnalyser(); analyser.fftSize=512;
       vadData = new Uint8Array(analyser.fftSize);
       src.connect(analyser);
-      vadTimer = setInterval(function(){
-        analyser.getByteTimeDomainData(vadData);
-        var peak=0;
-        for(var i=0;i<vadData.length;i++){ var v=Math.abs(vadData[i]-128); if(v>peak) peak=v; }
-        if(peak>segPeak) segPeak=peak;
-      }, 80);
-    }catch(e){ analyser=null; }
+    }catch(e){ analyser=null; }   // no analyser → fall back to time-capped takes
+    vadTimer = setInterval(tick, TICK_MS);   // always runs: drives endpointing
   }
 
-  /* ---------------- segment recorder loop ---------------- */
-  function recordSegment(){
+  // Runs every TICK_MS. Closes the current take once the speaker has been quiet
+  // for SILENCE_MS, or the hard MAX_UTTER_MS cap is hit.
+  function tick(){
+    if(!listening || ending) return;
+    var now = Date.now();
+    if(analyser){
+      analyser.getByteTimeDomainData(vadData);
+      var peak=0;
+      for(var i=0;i<vadData.length;i++){ var v=Math.abs(vadData[i]-128); if(v>peak) peak=v; }
+      if(peak>=VAD_THRESH){ heardVoice=true; lastVoiceAt=now; }
+    }
+    var dur = now - uttStart;
+    if(analyser && heardVoice){
+      if((now - lastVoiceAt) >= SILENCE_MS || dur >= MAX_UTTER_MS) endUtterance();
+    } else if(dur >= MAX_UTTER_MS){
+      endUtterance();   // no analyser, or nothing heard yet: recycle at the cap
+    }
+  }
+
+  /* ----- utterance recorder: one continuous take per spoken question ----- */
+  function beginUtterance(){
     if(!listening || !stream) return;
-    var chunks=[]; segPeak=0;
+    uttChunks=[]; heardVoice=false; ending=false;
+    uttStart=Date.now(); lastVoiceAt=uttStart;
     try{ rec = MIME ? new MediaRecorder(stream,{mimeType:MIME}) : new MediaRecorder(stream); }
     catch(e){ try{ rec=new MediaRecorder(stream); }catch(e2){ showNotice("无法启动录音。",true); return; } }
-    rec.ondataavailable=function(e){ if(e.data && e.data.size) chunks.push(e.data); };
-    rec.onstop=function(){
-      var hadVoice = (analyser===null) || (segPeak>=VAD_THRESH);
-      var blob = new Blob(chunks,{type: MIME||"audio/webm"});
-      if(listening) recordSegment();           // immediately start the next one
-      if(hadVoice && blob.size>1500) sendSegment(blob);
-    };
+    rec.ondataavailable=function(e){ if(e.data && e.data.size) uttChunks.push(e.data); };
+    rec.onstop=flushUtterance;
     try{ rec.start(); }catch(e){ showNotice("无法启动录音。",true); return; }
-    setTimeout(function(){ try{ if(rec && rec.state!=="inactive") rec.stop(); }catch(e){} }, SEG_MS);
+  }
+
+  function endUtterance(){
+    if(ending) return; ending=true;
+    try{ if(rec && rec.state!=="inactive") rec.stop(); }catch(e){}
+  }
+
+  function flushUtterance(){
+    var send = (analyser===null) || heardVoice;
+    var blob = new Blob(uttChunks,{type: MIME||"audio/webm"});
+    if(listening) beginUtterance();          // immediately start the next take
+    if(send && blob.size>1500) sendSegment(blob);
   }
 
   function blobToB64(blob){
@@ -402,23 +434,58 @@
 
   function addCaption(en, zh, opts){
     if(liveEmpty){ liveEmpty.remove(); liveEmpty=null; }
+    opts = opts || {};
+    var id = opts.id || newId();
+    var t  = opts.t  || Date.now();
     var q = isQuestion(en);
     var row=document.createElement("div"); row.className="cap"+(q?" q":"");
+    row.dataset.id = id; row.dataset.t = String(t);
+
+    // "+" on the divider above this row: fold it up into the previous caption,
+    // so a question split across a pause becomes one sentence with one ✓.
+    var join=document.createElement("button"); join.className="join"; join.type="button";
+    join.title="与上一句合并"; join.textContent="+";
+    join.addEventListener("click", function(){ mergeUp(row); });
+    row.appendChild(join);
+
     var txt=document.createElement("div"); txt.className="txt";
     var e=document.createElement("div"); e.className="en"; e.textContent=en;
     txt.appendChild(e);
-    if(zh){ var z=document.createElement("div"); z.className="zh"; z.textContent=zh; txt.appendChild(z); }
+    var z=document.createElement("div"); z.className="zh"; z.textContent=zh||""; if(!zh) z.style.display="none";
+    txt.appendChild(z);
     var ask=document.createElement("button"); ask.className="ask"; ask.title="把这句作为问题获取回答"; ask.textContent="✓";
     ask.addEventListener("click", function(){
       if(ask.classList.contains("done")) return;
       ask.classList.add("done");
-      askQuestion(en);
+      askQuestion(e.textContent);           // send the CURRENT (possibly merged) text
     });
     row.appendChild(txt); row.appendChild(ask);
     liveEl.appendChild(row);
     liveEl.scrollTop = liveEl.scrollHeight;
     while(liveEl.children.length>60) liveEl.removeChild(liveEl.firstChild);
-    if(!(opts&&opts.restore)){ capLog.push({t:Date.now(), en:en, zh:zh}); saveCaps(); }
+    if(!opts.restore){ capLog.push({t:t, en:en, zh:zh, id:id}); saveCaps(); }
+  }
+
+  function capIndexById(id){ for(var i=0;i<capLog.length;i++){ if(capLog[i].id===id) return i; } return -1; }
+
+  // Merge `row` up into the caption directly above it (concatenate EN + 中),
+  // drop `row`, and keep a single ✓ on the combined caption. Persists the fold.
+  function mergeUp(row){
+    var prev = row.previousElementSibling;
+    while(prev && !prev.classList.contains("cap")) prev = prev.previousElementSibling;
+    if(!prev) return;
+    var pe=prev.querySelector(".en"), pz=prev.querySelector(".zh");
+    var ce=row.querySelector(".en"),  cz=row.querySelector(".zh");
+    var enM = (((pe&&pe.textContent)||"") + " " + ((ce&&ce.textContent)||"")).replace(/\s+/g," ").trim();
+    var zhM = (((pz&&pz.textContent)||"") + ((cz&&cz.textContent)||"")).trim();
+    if(pe) pe.textContent = enM;
+    if(pz){ pz.textContent = zhM; pz.style.display = zhM ? "block" : "none"; }
+    if(isQuestion(enM)) prev.classList.add("q");   // surface the ✓ if it now reads as a question
+    var pi=capIndexById(prev.dataset.id), ci=capIndexById(row.dataset.id);
+    if(pi>-1){ capLog[pi].en=enM; capLog[pi].zh=zhM; }
+    if(ci>-1){ capLog.splice(ci,1); }
+    saveCaps();
+    row.remove();
   }
 
   /* ---------------- answers ---------------- */
