@@ -141,6 +141,7 @@
         <button class="splitbtn" id="split31" type="button" data-ratio="3:1" title="右侧占四分之一">3:1</button>
       </div>
       <div class="spacer"></div>
+      <button class="iconbtn" id="clearBtn" title="清空实时翻译和问 AI 记录">↻</button>
       <button class="iconbtn" id="micBtn" title="开关聆听"><span class="rec" style="display:none"></span><span id="micTxt">聆听</span></button>
       <button class="iconbtn" id="closeBtn" title="收起">✕</button>
     </div>
@@ -182,7 +183,7 @@
   var panel=$("panel"), launch=$("launch"), launchTxt=$("launchTxt"),
       liveEl=$("live"), liveEmpty=$("liveEmpty"), ansEl=$("answers"),
       micBtn=$("micBtn"), micTxt=$("micTxt"), micRec=micBtn.querySelector(".rec"),
-      closeBtn=$("closeBtn"), qInput=$("qInput"), sendBtn=$("sendBtn"),
+      clearBtn=$("clearBtn"), closeBtn=$("closeBtn"), qInput=$("qInput"), sendBtn=$("sendBtn"),
       noticeEl=$("notice"), roomTag=$("roomTag");
 
   var open=false, listening=false, stream=null, rec=null, MIME="",
@@ -215,6 +216,16 @@
   function writeLog(key, arr, cap){ try{ var a=prune(arr); if(a.length>cap) a=a.slice(a.length-cap); localStorage.setItem(key, JSON.stringify(a)); return a; }catch(e){ return arr; } }
   function saveCaps(){ capLog=writeLog(CAP_KEY, capLog, 120); }
   function saveAns(){ ansLog=writeLog(ANS_KEY, ansLog, 60); }
+  function liveEmptyHtml(){ return "开启聆听后，听到的话会在这里逐句出现。识别到问题的句子，右侧会出现灰色 ✓，点一下即可获取答案。"; }
+  function ansEmptyHtml(){ return "问题答案会出现在这里 —— 来自 ✓ 选中的问题，或你在下面输入的问题。"; }
+  function clearHistory(opts){
+    capLog=[]; ansLog=[]; seen={}; ansEmptyRemoved=false;
+    try{ localStorage.removeItem(CAP_KEY); localStorage.removeItem(ANS_KEY); }catch(e){}
+    liveEl.innerHTML = '<div class="empty" id="liveEmpty">'+liveEmptyHtml()+'</div>';
+    liveEmpty = $("liveEmpty");
+    ansEl.innerHTML = '<div class="empty">'+ansEmptyHtml()+'</div>';
+    if(!(opts&&opts.keepNotice)) hideNotice();
+  }
   function restoreState(){
     capLog=loadLog(CAP_KEY); ansLog=loadLog(ANS_KEY);
     capLog.forEach(function(c){ addCaption(c.en||"", c.zh||"", {restore:true}); });
@@ -258,6 +269,10 @@
   /* ---------------- mic toggle ---------------- */
   micBtn.addEventListener("click", function(){
     if(listening) stopListening(); else startListening();
+  });
+  clearBtn.addEventListener("click", function(){
+    clearHistory();
+    if(ROOM) pushItem({ id:newId(), type:"clear", t:Date.now() });
   });
   function setMicUI(){
     micBtn.classList.toggle("on", listening);
@@ -419,6 +434,11 @@
 
   // Render an item that arrived from the other device (already answered).
   function renderRemote(item){
+    if(item && item.type==="clear"){
+      if(item.id) seen[item.id]=1;
+      clearHistory({remote:true, keepNotice:true});
+      return;
+    }
     if(!item || !item.id || seen[item.id]) return;
     seen[item.id]=1;
     var refs=newCard(item.q||"", true);
