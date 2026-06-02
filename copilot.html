@@ -157,7 +157,7 @@
     </div>
     <div class="roomtag" id="roomTag" style="display:none"></div>
 
-    <div class="winlabel lbl-live">实时字幕 · Live<span class="hint" id="liveHint">英文 + 中文 · 识别到问题点 ✓</span></div>
+    <div class="winlabel lbl-live">实时字幕 · Live<span class="hint" id="liveHint">中 / 英自动识别 · 识别到问题点 ✓</span></div>
     <div class="live" id="live"><div class="empty" id="liveEmpty">开启聆听后，听到的话会在这里逐句出现。识别到问题的句子，右侧会出现灰色 ✓，点一下即可获取答案。</div></div>
 
     <div class="winlabel">回答 · Answers<span class="hint">结合你的项目经历 · EN / 中文</span></div>
@@ -498,13 +498,19 @@
     if(/[?？]\s*$/.test(s)) return true;
     if(/(^|\s)(what|why|how|when|where|who|whom|whose|which)\b/.test(s)) return true;
     if(/(^|\s)(can|could|would|will|do|does|did|are|is|was|were|have|has|should|may|tell me|walk me|describe|explain|talk about|give me an example|how about)\b/.test(s.split(/\s+/).slice(0,4).join(" "))) return true;
-    if(/(吗|呢|为什么|如何|怎么|怎样|是否|能不能|可不可以|介绍一下|说说|讲讲|谈谈)/.test(t)) return true;
+    if(/(吗|呢|为什么|为何|如何|怎么|怎样|是否|能不能|能否|可不可以|介绍一下|介绍下|说说|说一下|讲讲|讲一下|谈谈|谈一谈|聊聊|聊一聊|描述|解释|举例|举个例子|有没有|是不是|多少|哪些|哪个)/.test(t)) return true;
     return false;
   }
 
   // True for empty text or a known Whisper "silence filler" line, so it never shows.
   function isHallucination(en){
-    var s=(en||"").toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim();
+    var t=(en||"").trim();
+    if(!t) return true;
+    // Any CJK character means real speech — the English "outro" fillers below
+    // only apply to Latin-only lines, so Chinese / mixed captions are never
+    // mistaken for Whisper silence-filler and dropped.
+    for(var i=0;i<t.length;i++){ var c=t.charCodeAt(i); if(c>=0x3400 && c<=0x9fff) return false; }
+    var s=t.toLowerCase().replace(/[^a-z0-9 ]+/g," ").replace(/\s+/g," ").trim();
     if(!s) return true;
     if(HALLUC[s]) return true;
     if(/^(thank you for watching|thanks for watching|please subscribe|subscribe to|don t forget to subscribe|see you in the next|thank you for joining|thanks for joining)/.test(s)) return true;
