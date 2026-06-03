@@ -137,7 +137,7 @@
   <div class="stage" id="stage">
     <div class="wrap">
       <h1 id="stageH1">面试 Co-pilot</h1>
-      <p id="stageP">实时把听到的英文转成字幕 + 中文对照；识别到问题点一下 <b>✓</b>，下面就用你自己的经历给出可参考的英文 / 中文答案。也可以直接在最下方打字提问。</p>
+      <p id="stageP">实时把听到的英文转成字幕 + 中文对照；识别到问题点一下 <b>✓</b>，下面就结合 JD、你的项目和 Autodesk，用中文给出可参考的答案。也可以直接在最下方打字提问。</p>
       <p class="sub" id="stageSub">点击右上角按钮开始（首次会请求麦克风权限）。建议：电脑开本页做「主机」聆听 + 出答案，iPad 打开同一链接加 <kbd>?room=房间名&view=mirror</kbd> 当「镜像」只看答案。<br>字幕与答案由 AI 生成、有几秒延迟，仅作<strong>临场参考</strong>，照着自己的话说，别照念。</p>
     </div>
   </div>
@@ -160,7 +160,7 @@
     <div class="winlabel lbl-live">实时字幕 · Live<span class="hint" id="liveHint">中 / 英自动识别 · 识别到问题点 ✓</span></div>
     <div class="live" id="live"><div class="empty" id="liveEmpty">开启聆听后，听到的话会在这里逐句出现。识别到问题的句子，右侧会出现灰色 ✓，点一下即可获取答案。</div></div>
 
-    <div class="winlabel">回答 · Answers<span class="hint">结合你的项目经历 · EN / 中文</span></div>
+    <div class="winlabel">回答 · Answers<span class="hint">JD · 我的项目 · Autodesk · 仅中文</span></div>
     <div class="answers" id="answers"><div class="empty">问题答案会出现在这里 —— 来自 ✓ 选中的问题，或你在下面输入的问题。</div></div>
 
     <div class="notice" id="notice" style="display:none"></div>
@@ -595,6 +595,18 @@
   /* ---------------- answers ---------------- */
   var ansEmptyRemoved=false;
   function clearAnsEmpty(){ if(!ansEmptyRemoved){ var em=ansEl.querySelector(".empty"); if(em) em.remove(); ansEmptyRemoved=true; } }
+  // Position a card so its TOP sits at the top of the answers pane — a fresh
+  // answer starts at its first line and Yushi scrolls down himself, instead of
+  // the pane jumping to the very bottom.
+  function showCardTop(card){
+    if(!card) return;
+    try{
+      var top = card.getBoundingClientRect().top - ansEl.getBoundingClientRect().top + ansEl.scrollTop;
+      ansEl.scrollTop = Math.max(0, top - 6);
+    }catch(e){
+      try{ ansEl.scrollTop=ansEl.scrollHeight; }catch(_){}
+    }
+  }
   function newCard(q, remote){
     clearAnsEmpty();
     var card=document.createElement("div"); card.className="acard loading"+(remote?" remote":"");
@@ -605,15 +617,18 @@
     var zh=document.createElement("div"); zh.className="zh"; zh.style.display="none";
     card.appendChild(qd); card.appendChild(en); card.appendChild(zh);
     ansEl.appendChild(card);
-    ansEl.scrollTop=ansEl.scrollHeight;
+    showCardTop(card);
     return {card:card, en:en, zh:zh};
   }
   function fillCard(refs, en, zh, isErr){
     refs.card.classList.remove("loading");
     if(isErr) refs.card.classList.add("err");
-    refs.en.textContent = en || "(没拿到回答，换个说法或直接打字试试。)";
-    if(zh){ refs.zh.style.display="block"; refs.zh.textContent=zh; }
-    ansEl.scrollTop=ansEl.scrollHeight;
+    // Answers are Chinese-only now: zh is the primary text. Fall back to en
+    // (error messages pass their text as the first arg with an empty zh).
+    var main=(zh&&zh.trim())?zh:en;
+    refs.en.textContent = main || "(没拿到回答，换个说法或直接打字试试。)";
+    refs.zh.style.display="none";
+    showCardTop(refs.card);
   }
 
   function newId(){ return "q"+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
@@ -646,8 +661,8 @@
       if(j && j.error){ fillCard(refs,"模型返回错误："+j.error,"",true); showNotice("模型出错（可能是 OPENAI_MODEL 名称不对或不支持该参数）："+escapeHtml(String(j.error)), true); return; }
       var en=(j&&j.en)||"", zh=(j&&j.zh)||"";
       fillCard(refs, en, zh);
-      if(en) pushItem({ id:id, q:q, en:en, zh:zh });   // share to the other device
-      if(en){ ansLog.push({t:Date.now(), id:id, q:q, en:en, zh:zh, remote:false}); saveAns(); }
+      if(zh||en) pushItem({ id:id, q:q, en:en, zh:zh });   // share to the other device
+      if(zh||en){ ansLog.push({t:Date.now(), id:id, q:q, en:en, zh:zh, remote:false}); saveAns(); }
     }catch(e){
       fillCard(refs,"网络出错了，稍后再试，或直接打字提问。","",true);
     }
