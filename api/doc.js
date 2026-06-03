@@ -97,6 +97,82 @@ function injectBuilt(html, ts) {
   return html.replace(/<head>/i, '<head>\n' + tag);
 }
 
+// Self-contained client script for the bilingual language-order toggle. Pure ES5,
+// fully defensive (a throw can never break the doc). It flips the EN / 中文 blocks
+// inside every bilingual panel and remembers the choice per-device. During highlight
+// mode it snaps back to English-first, because the doc's sentence-pairing
+// (collectPairs) assumes that order; the user's preference is restored on exit.
+const LANG_TOGGLE_JS = `(function(){
+  try {
+    var btn = document.getElementById('langToggle');
+    if (!btn) return;
+    var KEY = 'prepdoc_langfirst';
+    function getFirst(){ try { return localStorage.getItem(KEY) === 'zh' ? 'zh' : 'en'; } catch(e){ return 'en'; } }
+    function headLang(el){
+      var h = el.tagName === 'H3' ? el : (el.querySelector ? el.querySelector('h3') : null);
+      if (!h) return null;
+      if (/English/i.test(h.textContent)) return 'en';
+      if (/中文/.test(h.textContent)) return 'zh';
+      return null;
+    }
+    function orderBody(pb, first){
+      var kids = Array.prototype.slice.call(pb.children), ei = -1, zi = -1, i, l;
+      for (i = 0; i < kids.length; i++){ l = headLang(kids[i]); if (l === 'en' && ei < 0) ei = i; if (l === 'zh' && zi < 0) zi = i; }
+      if (ei < 0 || zi < 0) return;
+      if (((ei < zi) ? 'en' : 'zh') === first) return;
+      var lo = Math.min(ei, zi), hi = Math.max(ei, zi), middle = kids.slice(lo, hi), divider = null;
+      for (i = 0; i < middle.length; i++){ if (middle[i].classList && middle[i].classList.contains('divider')){ divider = middle[i]; break; } }
+      var firstBlock = middle.filter(function(el){ return el !== divider; });
+      kids.slice(hi).concat(divider ? [divider] : [], firstBlock).forEach(function(n){ pb.appendChild(n); });
+    }
+    function applyOrder(first){
+      var bodies = document.querySelectorAll('.panel .panel-body'), i;
+      for (i = 0; i < bodies.length; i++) orderBody(bodies[i], first);
+    }
+    function paint(first){
+      var tx = btn.querySelector('.lt-tx');
+      if (tx) tx.textContent = (first === 'zh') ? '中文在前' : '英文在前';
+      btn.setAttribute('aria-pressed', first === 'zh' ? 'true' : 'false');
+    }
+    function setFirst(first, save){
+      applyOrder(first); paint(first);
+      if (save){ try { localStorage.setItem(KEY, first); } catch(e){} }
+    }
+    btn.addEventListener('click', function(){
+      if (document.body.classList.contains('highlighting')) return;
+      setFirst(getFirst() === 'zh' ? 'en' : 'zh', true);
+    });
+    try {
+      var mo = new MutationObserver(function(){
+        if (document.body.classList.contains('highlighting')) applyOrder('en');
+        else { applyOrder(getFirst()); paint(getFirst()); }
+      });
+      mo.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    } catch(e){}
+    setFirst(getFirst(), false);
+  } catch(e){}
+})();`;
+
+// Graft the language-order toggle onto the served HTML at request time. Because it
+// runs in the serve path, it applies to BOTH the baked doc AND an online-saved
+// override — so it can never disturb saved content (e.g. highlights): the stored
+// HTML is served untouched and the toggle is added on top. Idempotent (skips if the
+// HTML already has the button) and fail-safe (any unmatched anchor leaves the HTML
+// as-is; the whole thing is wrapped in try/catch). The button is anchored to the
+// MAIN sidebar title only, not the subnav ones.
+function injectLangToggle(html) {
+  try {
+    if (typeof html !== 'string' || html.indexOf('id="langToggle"') >= 0) return html;
+    const button = '\n    <button id="langToggle" type="button" aria-pressed="false" title="切换所有稿子的中英顺序：英文在前 / 中文在前"><span class="lt-ic" aria-hidden="true">⇄</span><span class="lt-tx">英文在前</span></button>';
+    html = html.replace(/(<nav class="sidebar">\s*<div class="sidebar-title">[^<]*<\/div>)/, '$1' + button);
+    const css = '<style id="langToggleCss">#langToggle{display:inline-flex;align-items:center;gap:6px;margin:4px 8px 10px;padding:6px 11px;font-family:inherit;font-size:12px;font-weight:700;letter-spacing:.2px;color:#bfe3d8;background:#15303a;border:1px solid #2b4a52;border-radius:7px;cursor:pointer;transition:background .12s,color .12s}#langToggle:hover{background:#1f4350;color:#fff}#langToggle .lt-ic{font-size:13px;opacity:.85}.layout.nav-collapsed nav.sidebar #langToggle{display:none}</style>';
+    html = html.replace('</head>', css + '\n</head>');
+    const js = '<script id="langToggleJs">' + LANG_TOGGLE_JS + '</' + 'script>';
+    html = html.replace('</body>', js + '\n</body>');
+    return html;
+  } catch (e) { return html; }
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (!auth.configured() || !keyCandidates().length) {
@@ -142,5 +218,5 @@ module.exports = async (req, res) => {
   if (html == null) { try { html = decryptDoc(); } catch (e) { html = null; } }
   if (html == null) { res.status(500).send('Decrypt failed — check COPILOT_KEY.'); return; }
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.status(200).send(injectBuilt(html, ts));
+  res.status(200).send(injectBuilt(injectLangToggle(html), ts));
 };
