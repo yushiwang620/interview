@@ -41,7 +41,7 @@ module.exports = async (req, res) => {
 
     const messages = [
       { role: 'system', content: profile.systemPrompt() },
-      { role: 'user', content: 'Interview question just asked:\n"' + question + '"\n\nDraft my spoken answer now, in Chinese only, as the JSON object {"zh":"..."} exactly per the OUTPUT FORMAT.' }
+      { role: 'user', content: 'Interview question just asked:\n"' + question + '"\n\nDraft my spoken answer now as the JSON object {"en":"...","zh":"..."} exactly per the OUTPUT FORMAT — English to read aloud in "en", a paragraph-for-paragraph Chinese translation in "zh" (same number of paragraphs, same order).' }
     ];
 
     const r = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -73,9 +73,9 @@ module.exports = async (req, res) => {
       en = (parsed.en || parsed.EN || '').toString().trim();
       zh = (parsed.zh || parsed.ZH || parsed.cn || '').toString().trim();
     } catch (e) {
-      // Model didn't return clean JSON — answers are Chinese-only now, so fall
-      // back to using the raw text as ZH (the primary field the UI renders).
-      zh = raw.trim();
+      // Model didn't return clean JSON — English is the primary field now, so
+      // fall back to using the raw text as EN (the line the UI reads aloud).
+      en = raw.trim();
     }
     res.status(200).json({ en: en, zh: zh });
   } catch (e) {

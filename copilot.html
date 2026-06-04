@@ -101,7 +101,12 @@
   .acard .q .qi{flex:0 0 auto; opacity:.7;}
   .acard .en{font-size:14.5px; line-height:1.55; color:#13202e; white-space:pre-wrap;}
   .acard .zh{font-size:13px; line-height:1.55; color:#5d6b7d; margin-top:8px; padding-top:8px; border-top:1px dashed #e4e8ee; white-space:pre-wrap;}
-  .acard.err .en{color:#b23b3b;}
+  /* English-first bilingual answer: .pen = the English block read aloud,
+     .pzh = its Chinese translation directly beneath it (interleaved pairs). */
+  .acard .pen{font-size:14.5px; line-height:1.55; color:#13202e; white-space:pre-wrap; margin:0 0 4px;}
+  .acard .pen + .pzh{margin-top:2px;}
+  .acard .pzh{font-size:12.5px; line-height:1.5; color:#6b7280; white-space:pre-wrap; margin:0 0 12px; padding-left:9px; border-left:2px solid #e4e8ee;}
+  .acard.err .en, .acard.err .pen{color:#b23b3b;}
   .acard .think{display:inline-flex;gap:4px;}
   .acard .think i{width:6px;height:6px;border-radius:50%;background:#c2cad4;animation:blink 1s infinite;}
   .acard .think i:nth-child(2){animation-delay:.2s;} .acard .think i:nth-child(3){animation-delay:.4s;}
@@ -127,6 +132,7 @@
     .panel{width:100vw; min-width:0; max-width:none;}
     .launch{font-size:16px; padding:12px 18px;}
     .cap .en{font-size:15.5px;} .acard .en{font-size:16px;} .acard .zh{font-size:14px;}
+    .acard .pen{font-size:16px;} .acard .pzh{font-size:14px;}
     .composer input{font-size:16px;} /* >=16px stops iOS zoom-on-focus */
   }
   @media (max-width:480px){ .live{flex:3 1 0;} }
@@ -137,7 +143,7 @@
   <div class="stage" id="stage">
     <div class="wrap">
       <h1 id="stageH1">面试 Co-pilot</h1>
-      <p id="stageP">实时把听到的英文转成字幕 + 中文对照；识别到问题点一下 <b>✓</b>，下面就结合 JD、你的项目和 Autodesk，用中文给出可参考的答案。也可以直接在最下方打字提问。</p>
+      <p id="stageP">实时把听到的英文转成字幕 + 中文翻译；识别到问题点一下 <b>✓</b>，下面就结合 JD、你的项目和 Autodesk，先用英文、再附中文翻译给出可参考的答案（一段英文一段中文）。也可以直接在最下方打字提问。</p>
       <p class="sub" id="stageSub">点击右上角按钮开始（首次会请求麦克风权限）。建议：电脑开本页做「主机」聆听 + 出答案，iPad 打开同一链接加 <kbd>?room=房间名&view=mirror</kbd> 当「镜像」只看答案。<br>字幕与答案由 AI 生成、有几秒延迟，仅作<strong>临场参考</strong>，照着自己的话说，别照念。</p>
     </div>
   </div>
@@ -157,10 +163,10 @@
     </div>
     <div class="roomtag" id="roomTag" style="display:none"></div>
 
-    <div class="winlabel lbl-live">实时字幕 · Live<span class="hint" id="liveHint">中 / 英自动识别 · 识别到问题点 ✓</span></div>
+    <div class="winlabel lbl-live">实时字幕 · Live<span class="hint" id="liveHint">英文识别 · 中文翻译 · 识别到问题点 ✓</span></div>
     <div class="live" id="live"><div class="empty" id="liveEmpty">开启聆听后，听到的话会在这里逐句出现。识别到问题的句子，右侧会出现灰色 ✓，点一下即可获取答案。</div></div>
 
-    <div class="winlabel">回答 · Answers<span class="hint">JD · 我的项目 · Autodesk · 仅中文</span></div>
+    <div class="winlabel">回答 · Answers<span class="hint">JD · 我的项目 · Autodesk · 英文为主 · 中文对照</span></div>
     <div class="answers" id="answers"><div class="empty">问题答案会出现在这里 —— 来自 ✓ 选中的问题，或你在下面输入的问题。</div></div>
 
     <div class="notice" id="notice" style="display:none"></div>
@@ -620,14 +626,30 @@
     showCardTop(card);
     return {card:card, en:en, zh:zh};
   }
+  // Split plain text into paragraphs on blank lines (keeps "• " bullet lines
+  // inside their paragraph). Used to pair English with its Chinese translation.
+  function splitParas(s){
+    return (s||"").trim().split(/\n\s*\n+/).map(function(x){return x.trim();}).filter(Boolean);
+  }
   function fillCard(refs, en, zh, isErr){
     refs.card.classList.remove("loading");
     if(isErr) refs.card.classList.add("err");
-    // Answers are Chinese-only now: zh is the primary text. Fall back to en
-    // (error messages pass their text as the first arg with an empty zh).
-    var main=(zh&&zh.trim())?zh:en;
-    refs.en.textContent = main || "(没拿到回答，换个说法或直接打字试试。)";
-    refs.zh.style.display="none";
+    // English-first bilingual: en is the line Yushi reads aloud; zh is a
+    // paragraph-for-paragraph Chinese translation (para i of zh translates
+    // para i of en). Render them INTERLEAVED — one English block, then its
+    // Chinese — using .pen / .pzh. Error messages arrive as text in en with an
+    // empty zh, so they render as a single (red) English block.
+    var enP=splitParas(en), zhP=splitParas(zh);
+    refs.en.innerHTML=""; refs.zh.style.display="none";
+    var n=Math.max(enP.length, zhP.length);
+    if(n===0){
+      refs.en.textContent="(没拿到回答，换个说法或直接打字试试。)";
+    } else {
+      for(var i=0;i<n;i++){
+        if(enP[i]){ var pe=document.createElement("div"); pe.className="pen"; pe.textContent=enP[i]; refs.en.appendChild(pe); }
+        if(zhP[i]){ var pz=document.createElement("div"); pz.className="pzh"; pz.textContent=zhP[i]; refs.en.appendChild(pz); }
+      }
+    }
     showCardTop(refs.card);
   }
 

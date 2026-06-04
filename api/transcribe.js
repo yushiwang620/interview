@@ -3,15 +3,15 @@
 //   -> { en, zh }
 //
 // NOTE: the field names {en, zh} are HISTORICAL — they're just the two display
-// slots in copilot.html (primary line + small secondary line). What they carry
-// now is language-agnostic:
-//   en = PRIMARY line: the transcript EXACTLY as spoken — pure Chinese,
-//        English, or code-switched 中/英. We call /audio/transcriptions (NOT
-//        /translations), which keeps the original language and auto-detects it,
-//        so the interviewer's real words show up. (We no longer force English.)
-//   zh = SECONDARY line: a translation of that text into the OTHER language
-//        (English when the transcript is Chinese/mixed; Simplified Chinese when
-//        it's English-only) — a quick reading aid; may be "".
+// slots in copilot.html (primary line + small secondary line). What they carry:
+//   en = PRIMARY line: the transcript EXACTLY as spoken. This is now an
+//        English-language interview, so the primary line is normally English.
+//        We call /audio/transcriptions (NOT /translations) with auto-detect (no
+//        forced `language`), so if the interviewer slips into Chinese their real
+//        words still show up verbatim instead of being garbled into English.
+//   zh = SECONDARY line: a real-time Simplified-Chinese translation of that
+//        text, as a quick reading aid. Skipped (left "") when the transcript is
+//        already mostly Chinese (no point translating Chinese into Chinese).
 //
 // The OpenAI key lives ONLY here, as a Vercel Environment Variable
 // (Project -> Settings -> Environment Variables -> OPENAI_API_KEY).
@@ -34,8 +34,9 @@ const EXT = {
 // A short domain hint helps Whisper with proper nouns and 中/英 code-switching
 // (it keeps English product/tech terms intact inside Chinese speech, and vice
 // versa). It biases recognition only — it is not added to the output.
-const PROMPT = 'Job interview about architecture, UX design, software and BIM/Revit. ' +
-  '面试对话，内容涉及建筑、用户体验设计、软件开发与 BIM/Revit，中英文混合。';
+const PROMPT = 'A job interview conducted in English, about architecture, UX / experience ' +
+  'design, software, and BIM / Revit (Revit, Forma, Dynamo, ACC, Fusion). The interviewer ' +
+  'speaks English; keep product and technical names intact. 偶尔会有中英文混合。';
 
 function hasCJK(s) {
   s = s || '';
@@ -44,6 +45,20 @@ function hasCJK(s) {
     if (c >= 0x3400 && c <= 0x9fff) return true; // CJK Ext-A + Unified Ideographs
   }
   return false;
+}
+
+// True when the text is predominantly Chinese (at least as many CJK characters
+// as Latin letters). Used to SKIP the Chinese gloss when the interviewer already
+// spoke Chinese — the verbatim primary line is enough in that case.
+function isMostlyChinese(s) {
+  s = s || '';
+  let cjk = 0, latin = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 0x3400 && c <= 0x9fff) cjk++;
+    else if ((c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a)) latin++;
+  }
+  return cjk > 0 && cjk >= latin;
 }
 
 // Whisper "fills" near-silent / low-content audio with stock outro lines.
@@ -107,30 +122,32 @@ module.exports = async (req, res) => {
 
     if (!text || isNoise(text)) { res.status(200).json({ en: '', zh: '' }); return; }
 
-    // Secondary line: render the SAME utterance in the OTHER language as a quick
-    // reading aid. Chinese/mixed -> English; English-only -> Simplified Chinese.
-    const target = hasCJK(text) ? 'English' : 'Simplified Chinese';
+    // Secondary line: a real-time Simplified-Chinese translation of the (mostly
+    // English) transcript, as a quick reading aid. If the interviewer already
+    // spoke mostly Chinese, skip it — the verbatim primary line is enough.
     let gloss = '';
-    try {
-      const cr = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-        body: JSON.stringify({
-          // Fast/cheap model for the live caption gloss. Override with
-          // OPENAI_TRANSLATE_MODEL (the answer engine uses OPENAI_MODEL).
-          model: process.env.OPENAI_TRANSLATE_MODEL || 'gpt-4o-mini',
-          temperature: 0.2,
-          messages: [
-            { role: 'system', content: 'Translate the user text to natural, concise ' + target + '. Keep technical terms and product names (e.g. Revit, BIM, Figma, Unity) as-is. Output ONLY the translation, no quotes, no notes.' },
-            { role: 'user', content: text }
-          ]
-        })
-      });
-      const cj = await cr.json();
-      gloss = ((cj.choices && cj.choices[0] && cj.choices[0].message && cj.choices[0].message.content) || '').trim();
-    } catch (e) { gloss = ''; }
+    if (!isMostlyChinese(text)) {
+      try {
+        const cr = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+          body: JSON.stringify({
+            // Fast/cheap model for the live caption gloss. Override with
+            // OPENAI_TRANSLATE_MODEL (the answer engine uses OPENAI_MODEL).
+            model: process.env.OPENAI_TRANSLATE_MODEL || 'gpt-4o-mini',
+            temperature: 0.2,
+            messages: [
+              { role: 'system', content: 'Translate the user text to natural, concise Simplified Chinese. Keep technical terms and product names (e.g. Revit, BIM, Forma, Figma, Unity) as-is. Output ONLY the translation, no quotes, no notes.' },
+              { role: 'user', content: text }
+            ]
+          })
+        });
+        const cj = await cr.json();
+        gloss = ((cj.choices && cj.choices[0] && cj.choices[0].message && cj.choices[0].message.content) || '').trim();
+      } catch (e) { gloss = ''; }
+    }
 
-    // en = verbatim transcript (primary, top); zh = other-language gloss (below).
+    // en = verbatim transcript (primary, top); zh = Simplified-Chinese gloss (below).
     res.status(200).json({ en: text, zh: gloss });
   } catch (e) {
     res.status(200).json({ en: '', zh: '', error: 'exception' });
