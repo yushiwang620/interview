@@ -35,9 +35,9 @@ module.exports = async (req, res) => {
       res.status(200).json({ en: '', zh: '' });
       return;
     }
-    // Model is set via the OPENAI_MODEL env var in Vercel (default gpt-5.5),
-    // so you can change models without editing/redeploying code.
-    const model = body.model || process.env.OPENAI_MODEL || 'gpt-5.5';
+    // Model is set via the OPENAI_MODEL env var in Vercel (falls back to gpt-4o,
+    // a stable chat model that supports temperature + JSON mode here).
+    const model = body.model || process.env.OPENAI_MODEL || 'gpt-4o';
 
     const messages = [
       { role: 'system', content: profile.systemPrompt() },
