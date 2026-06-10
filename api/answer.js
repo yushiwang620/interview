@@ -35,9 +35,10 @@ module.exports = async (req, res) => {
       res.status(200).json({ en: '', zh: '' });
       return;
     }
-    // Model is set via the OPENAI_MODEL env var in Vercel (falls back to gpt-4o,
-    // a stable chat model that supports temperature + JSON mode here).
-    const model = body.model || process.env.OPENAI_MODEL || 'gpt-4o';
+    // Model is set via the OPENAI_MODEL env var in Vercel. Falls back to gpt-4o-mini
+    // because the system prompt now carries the full prep doc (~80K tokens) and gpt-4o's
+    // tier-1 TPM limit (30K) is too low — gpt-4o-mini's TPM (~200K) fits the big prompt.
+    const model = body.model || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
     const messages = [
       { role: 'system', content: profile.systemPrompt() },
