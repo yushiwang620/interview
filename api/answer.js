@@ -35,10 +35,13 @@ module.exports = async (req, res) => {
       res.status(200).json({ en: '', zh: '' });
       return;
     }
-    // Model is set via the OPENAI_MODEL env var in Vercel. Falls back to gpt-4o-mini
-    // because the system prompt now carries the full prep doc (~80K tokens) and gpt-4o's
-    // tier-1 TPM limit (30K) is too low — gpt-4o-mini's TPM (~200K) fits the big prompt.
-    const model = body.model || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+    // Model is set via the OPENAI_MODEL env var in Vercel (env WINS over this default).
+    // Falls back to gpt-4.1-mini: it has the high TPM the big ~80K-token doc prompt needs
+    // (gpt-4o's tier-1 30K TPM is too low) but is faster than gpt-4o-mini. For even more
+    // speed set OPENAI_MODEL=gpt-4.1-nano. The real latency is prefilling the whole doc
+    // every call — OpenAI auto-caches the identical system prefix, so 2nd+ calls are
+    // faster; trimming the embedded doc is the durable fix.
+    const model = body.model || process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 
     const messages = [
       { role: 'system', content: profile.systemPrompt() },
