@@ -101,8 +101,9 @@
   .acard .q .qi{flex:0 0 auto; opacity:.7;}
   .acard .en{font-size:14.5px; line-height:1.55; color:#13202e; white-space:pre-wrap;}
   .acard .zh{font-size:13px; line-height:1.55; color:#5d6b7d; margin-top:8px; padding-top:8px; border-top:1px dashed #e4e8ee; white-space:pre-wrap;}
-  /* English-first bilingual answer: .pen = the English block read aloud,
-     .pzh = its Chinese translation directly beneath it (interleaved pairs). */
+  /* Chinese-first bilingual answer: .pen = the PRIMARY block (now Chinese, read
+     aloud), .pzh = the secondary translation (now English) beneath it. The class
+     names are kept; they denote primary/secondary visual roles, not language. */
   .acard .pen{font-size:14.5px; line-height:1.55; color:#13202e; white-space:pre-wrap; margin:0 0 4px;}
   .acard .pen + .pzh{margin-top:2px;}
   .acard .pzh{font-size:12.5px; line-height:1.5; color:#6b7280; white-space:pre-wrap; margin:0 0 12px; padding-left:9px; border-left:2px solid #e4e8ee;}
@@ -634,11 +635,13 @@
   function fillCard(refs, en, zh, isErr){
     refs.card.classList.remove("loading");
     if(isErr) refs.card.classList.add("err");
-    // English-first bilingual: en is the line Yushi reads aloud; zh is a
-    // paragraph-for-paragraph Chinese translation (para i of zh translates
-    // para i of en). Render them INTERLEAVED — one English block, then its
-    // Chinese — using .pen / .pzh. Error messages arrive as text in en with an
-    // empty zh, so they render as a single (red) English block.
+    // Chinese-first bilingual: zh is now the PRIMARY answer Yushi reads aloud;
+    // en is a paragraph-for-paragraph English translation directly beneath it.
+    // Render INTERLEAVED — one Chinese block (primary, .pen styling), then its
+    // English (secondary, .pzh styling). (.pen/.pzh are just primary/secondary
+    // visual roles now, not language tags.) Error / fallback text arrives in en
+    // with an empty zh; in that case show the English as the primary block so it
+    // stays prominent (and red for errors via .acard.err .pen).
     var enP=splitParas(en), zhP=splitParas(zh);
     refs.en.innerHTML=""; refs.zh.style.display="none";
     var n=Math.max(enP.length, zhP.length);
@@ -646,8 +649,9 @@
       refs.en.textContent="(没拿到回答，换个说法或直接打字试试。)";
     } else {
       for(var i=0;i<n;i++){
-        if(enP[i]){ var pe=document.createElement("div"); pe.className="pen"; pe.textContent=enP[i]; refs.en.appendChild(pe); }
-        if(zhP[i]){ var pz=document.createElement("div"); pz.className="pzh"; pz.textContent=zhP[i]; refs.en.appendChild(pz); }
+        var zt=zhP[i], et=enP[i];
+        if(zt){ var pz=document.createElement("div"); pz.className="pen"; pz.textContent=zt; refs.en.appendChild(pz); }
+        if(et){ var pe=document.createElement("div"); pe.className=zt?"pzh":"pen"; pe.textContent=et; refs.en.appendChild(pe); }
       }
     }
     showCardTop(refs.card);

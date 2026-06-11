@@ -36,17 +36,30 @@ module.exports = async (req, res) => {
       return;
     }
     // Model is set via the OPENAI_MODEL env var in Vercel (env WINS over this default).
-    // Falls back to gpt-4.1-mini: it has the high TPM the big ~80K-token doc prompt needs
-    // (gpt-4o's tier-1 30K TPM is too low) but is faster than gpt-4o-mini. For even more
-    // speed set OPENAI_MODEL=gpt-4.1-nano. The real latency is prefilling the whole doc
-    // every call — OpenAI auto-caches the identical system prefix, so 2nd+ calls are
-    // faster; trimming the embedded doc is the durable fix.
+    // The prompt is now lean (~few-K tokens), so TPM is no longer a constraint — any
+    // model fits. Default gpt-4.1-mini (fast). To try a "5" model set OPENAI_MODEL=gpt-5
+    // (or gpt-5-mini for speed); gpt-4o / gpt-4.1 also work now.
     const model = body.model || process.env.OPENAI_MODEL || 'gpt-4.1-mini';
+    // GPT-5 and o-series are REASONING models: they reject a custom temperature and
+    // take a reasoning_effort instead, so detect them or a "5" model 400s.
+    const isReasoning = /^(gpt-5|o\d)/i.test(model);
 
     const messages = [
       { role: 'system', content: profile.systemPrompt() },
-      { role: 'user', content: 'Interview question just asked:\n"' + question + '"\n\nDraft my spoken answer now as the JSON object {"en":"...","zh":"..."} exactly per the OUTPUT FORMAT — English to read aloud in "en", a paragraph-for-paragraph Chinese translation in "zh" (same number of paragraphs, same order).' }
+      { role: 'user', content: 'Interview question just asked:\n"' + question + '"\n\nDraft my spoken answer now as the JSON object {"zh":"...","en":"..."} exactly per the OUTPUT FORMAT — the PRIMARY spoken answer in natural Mandarin in "zh" (this is what I read aloud), and a faithful, paragraph-for-paragraph English translation in "en" (same number of paragraphs, same order).' }
     ];
+
+    const payload = {
+      model: model,
+      messages: messages,
+      response_format: { type: 'json_object' }
+    };
+    if (isReasoning) {
+      // keep latency sane; override via OPENAI_REASONING_EFFORT (minimal|low|medium|high)
+      payload.reasoning_effort = process.env.OPENAI_REASONING_EFFORT || 'low';
+    } else {
+      payload.temperature = 0.5;
+    }
 
     const r = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -54,12 +67,7 @@ module.exports = async (req, res) => {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + key
       },
-      body: JSON.stringify({
-        model: model,
-        messages: messages,
-        temperature: 0.5,
-        response_format: { type: 'json_object' }
-      })
+      body: JSON.stringify(payload)
     });
     const j = await r.json();
     // Surface the real OpenAI error (e.g. wrong model name or unsupported
