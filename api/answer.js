@@ -44,8 +44,11 @@ module.exports = async (req, res) => {
     // take a reasoning_effort instead, so detect them or a "5" model 400s.
     const isReasoning = /^(gpt-5|o\d)/i.test(model);
 
+    // Which target role to answer as: 'mm' = MMoser AI Team Leader, else Autodesk.
+    const position = (((body.position || body.pos || '') + '').toLowerCase() === 'mm') ? 'mm' : 'ad';
+
     const messages = [
-      { role: 'system', content: profile.systemPrompt() },
+      { role: 'system', content: profile.systemPrompt(position) },
       { role: 'user', content: 'Interview question just asked:\n"' + question + '"\n\nDraft my spoken answer now as the JSON object {"zh":"...","en":"..."} exactly per the OUTPUT FORMAT — the PRIMARY spoken answer in natural Mandarin in "zh" (this is what I read aloud), and a faithful, paragraph-for-paragraph English translation in "en" (same number of paragraphs, same order).' }
     ];
 

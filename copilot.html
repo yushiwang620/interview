@@ -157,6 +157,10 @@
         <button class="splitbtn" id="split11" type="button" data-ratio="1:1" title="左右各占一半">1:1</button>
         <button class="splitbtn" id="split31" type="button" data-ratio="3:1" title="右侧占四分之一">3:1</button>
       </div>
+      <select id="copilotPos" title="切换岗位 / Position" style="font-size:11px;border:1px solid #d6dce4;border-radius:7px;padding:3px 5px;background:#fff;color:#13202e;font-weight:600;cursor:pointer;max-width:118px;">
+        <option value="ad">Autodesk</option>
+        <option value="mm">穆氏 AI Lead</option>
+      </select>
       <div class="spacer"></div>
       <button class="iconbtn" id="clearBtn" title="清空实时翻译和问 AI 记录">↻</button>
       <button class="iconbtn" id="micBtn" title="开关聆听"><span class="rec" style="display:none"></span><span id="micTxt">聆听</span></button>
@@ -167,7 +171,7 @@
     <div class="winlabel lbl-live">实时字幕 · Live<span class="hint" id="liveHint">英文识别 · 中文翻译 · 识别到问题点 ✓</span></div>
     <div class="live" id="live"><div class="empty" id="liveEmpty">开启聆听后，听到的话会在这里逐句出现。识别到问题的句子，右侧会出现灰色 ✓，点一下即可获取答案。</div></div>
 
-    <div class="winlabel">回答 · Answers<span class="hint">JD · 我的项目 · Autodesk · 英文为主 · 中文对照</span></div>
+    <div class="winlabel">回答 · Answers<span class="hint">跟随岗位切换 · 中文为主 · 英文对照</span></div>
     <div class="answers" id="answers"><div class="empty">问题答案会出现在这里 —— 来自 ✓ 选中的问题，或你在下面输入的问题。</div></div>
 
     <div class="notice" id="notice" style="display:none"></div>
@@ -185,6 +189,18 @@
   var API_BASE = "";
   var TRANSCRIBE = API_BASE + "/api/transcribe";
   var ANSWER     = API_BASE + "/api/answer";
+  // Which target role the co-pilot answers as: 'ad' = Autodesk, 'mm' = MMoser AI Team Leader.
+  var curPos = "ad";
+  try { curPos = localStorage.getItem("copilot_pos") || "ad"; } catch(e){}
+  (function(){
+    var ps = document.getElementById("copilotPos");
+    if (!ps) return;
+    ps.value = curPos;
+    ps.addEventListener("change", function(){
+      curPos = ps.value;
+      try { localStorage.setItem("copilot_pos", curPos); } catch(e){}
+    });
+  })();
   var SESSION    = API_BASE + "/api/session";
   // Utterance endpointing: keep ONE recording open while the speaker is talking
   // and only close it after a real pause, so a slowly-spoken question stays a
@@ -680,7 +696,7 @@
     try{
       var r=await fetch(ANSWER,{
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ question:q })
+        body: JSON.stringify({ question:q, position:curPos })
       });
       var j=await r.json();
       if(j && j.error==="no_key"){ fillCard(refs,"后端还没配置 OpenAI Key（Vercel 环境变量 OPENAI_API_KEY）。","",true); showNotice("后端还没配置 OPENAI_API_KEY，无法生成答案。", true); return; }
