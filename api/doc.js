@@ -177,7 +177,8 @@ function injectLangToggle(html) {
 // override — so editing a self-intro never forces the user to lose their highlights.
 const FRESH_PANELS = ['mm-intro'];
 function sectionRe(id) {
-  return new RegExp('<section class="[^"]*" id="' + id + '"[\\s\\S]*?</section>');
+  // order-independent: match any <section ... id="ID" ...> ... </section>
+  return new RegExp('<section [^>]*\\bid="' + id + '"[^>]*>[\\s\\S]*?</section>');
 }
 function refreshPanels(overrideHtml, baseHtml) {
   let out = overrideHtml;
