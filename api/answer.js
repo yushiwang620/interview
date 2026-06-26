@@ -44,8 +44,10 @@ module.exports = async (req, res) => {
     // take a reasoning_effort instead, so detect them or a "5" model 400s.
     const isReasoning = /^(gpt-5|o\d)/i.test(model);
 
-    // Which target role to answer as: 'mm' = MMoser AI Team Leader, else Autodesk.
-    const position = (((body.position || body.pos || '') + '').toLowerCase() === 'mm') ? 'mm' : 'ad';
+    // Which target role to answer as: 'mm' = MMoser AI Team Leader, 'mf' = MMoser
+    // founder conversation (visionary mode), else Autodesk.
+    const _p = ((body.position || body.pos || '') + '').toLowerCase();
+    const position = (_p === 'mm' || _p === 'mf') ? _p : 'ad';
 
     const messages = [
       { role: 'system', content: profile.systemPrompt(position) },
