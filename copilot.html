@@ -178,7 +178,8 @@
     <div class="notice" id="notice" style="display:none"></div>
 
     <div class="composer">
-      <input id="qInput" type="text" placeholder="直接打字提问，回车发送…" autocomplete="off">
+      <input id="qInput" type="text" placeholder="直接打字提问，回车发送…（粘贴整篇对谈稿后点📌设为背景）" autocomplete="off">
+      <button id="bgBtn" title="把输入框里的内容设为背景资料(整篇对谈稿)。设好后每次提问都会带上，AI 用它的内容和口吻作答；输入框留空时点它=清除背景" style="flex:0 0 auto;border:0;background:#15303a;color:#bfe3d8;font-weight:600;font-size:13px;padding:0 11px;border-radius:10px;cursor:pointer;">📌背景</button>
       <button id="sendBtn">发送</button>
     </div>
   </aside>
@@ -201,6 +202,21 @@
       curPos = ps.value;
       try { localStorage.setItem("copilot_pos", curPos); } catch(e){}
     });
+  })();
+  // Background context: paste the prepared conversation script, click 📌 to store it;
+  // every question then carries it so the AI reuses its content + voice. Empty input + 📌 = clear.
+  var bgContext = "";
+  try { bgContext = localStorage.getItem("copilot_bg") || ""; } catch(e){}
+  (function(){
+    var bb = document.getElementById("bgBtn"), qi = document.getElementById("qInput");
+    function paintBg(){ if (!bb) return; bb.style.background = bgContext ? "#0e7490" : "#15303a"; bb.textContent = bgContext ? ("📌已设 "+bgContext.length) : "📌背景"; }
+    if (bb) bb.addEventListener("click", function(){
+      var t = (qi && qi.value || "").trim();
+      if (t){ bgContext = t; try { localStorage.setItem("copilot_bg", bgContext); } catch(e){} if (qi) qi.value=""; showNotice("已把这段设为背景资料（"+bgContext.length+" 字）；之后每次提问都会带上，AI 会用它的内容和口吻来答。", false); }
+      else { bgContext = ""; try { localStorage.removeItem("copilot_bg"); } catch(e){} showNotice("已清除背景资料。", false); }
+      paintBg();
+    });
+    paintBg();
   })();
   var SESSION    = API_BASE + "/api/session";
   // Utterance endpointing: keep ONE recording open while the speaker is talking
@@ -697,7 +713,7 @@
     try{
       var r=await fetch(ANSWER,{
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ question:q, position:curPos })
+        body: JSON.stringify({ question:q, position:curPos, background:bgContext })
       });
       var j=await r.json();
       if(j && j.error==="no_key"){ fillCard(refs,"后端还没配置 OpenAI Key（Vercel 环境变量 OPENAI_API_KEY）。","",true); showNotice("后端还没配置 OPENAI_API_KEY，无法生成答案。", true); return; }

@@ -49,10 +49,16 @@ module.exports = async (req, res) => {
     const _p = ((body.position || body.pos || '') + '').toLowerCase();
     const position = (_p === 'mm' || _p === 'mf') ? _p : 'ad';
 
-    const messages = [
-      { role: 'system', content: profile.systemPrompt(position) },
-      { role: 'user', content: 'Interview question just asked:\n"' + question + '"\n\nDraft my spoken answer now as the JSON object {"zh":"...","en":"..."} exactly per the OUTPUT FORMAT — the PRIMARY spoken answer in natural Mandarin in "zh" (this is what I read aloud), and a faithful, paragraph-for-paragraph English translation in "en" (same number of paragraphs, same order).' }
-    ];
+    // Optional persistent background the user pasted once (e.g. the prepared
+    // conversation script). Reused to ground answers and match his voice; for a
+    // similar question the model reuses the prepared answer. Capped for latency.
+    const background = ((body.background || body.bg || '') + '').slice(0, 240000);
+
+    const messages = [ { role: 'system', content: profile.systemPrompt(position) } ];
+    if (background && background.length > 20) {
+      messages.push({ role: 'user', content: 'PREPARED BACKGROUND — my own prepared conversation material (self-intro, prepared Q&A, positions, voice). Use it to ground your answer and match my voice; if the question below resembles something covered here, REUSE and adapt that prepared answer. Do not contradict it.\n\n' + background });
+    }
+    messages.push({ role: 'user', content: 'Interview question just asked:\n"' + question + '"\n\nDraft my spoken answer now as the JSON object {"zh":"...","en":"..."} exactly per the OUTPUT FORMAT — the PRIMARY spoken answer in natural Mandarin in "zh" (this is what I read aloud), and a faithful, paragraph-for-paragraph English translation in "en" (same number of paragraphs, same order).' });
 
     const payload = {
       model: model,
