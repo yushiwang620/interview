@@ -34,9 +34,11 @@ const EXT = {
 // A short domain hint helps Whisper with proper nouns and 中/英 code-switching
 // (it keeps English product/tech terms intact inside Chinese speech, and vice
 // versa). It biases recognition only — it is not added to the output.
-const PROMPT = 'A job interview conducted in English, about architecture, UX / experience ' +
-  'design, software, and BIM / Revit (Revit, Forma, Dynamo, ACC, Fusion). The interviewer ' +
-  'speaks English; keep product and technical names intact. 偶尔会有中英文混合。';
+const PROMPT = 'A professional conversation (a job interview or an exploratory chat) about workplace ' +
+  'design, architecture, AI and data in the built environment, building performance, sustainability, ' +
+  'digital twins, and experience design. Speakers may be in English or in Chinese. Keep proper nouns ' +
+  'and technical terms intact: M Moser, ETS, Living Labs, digital twin, IEQ, BIM, Revit, Forma, ' +
+  'Floorcast, Ask Tom, thermal comfort, HVAC, workplace, agentic AI. 偶尔会有中英文混合。';
 
 function hasCJK(s) {
   s = s || '';
