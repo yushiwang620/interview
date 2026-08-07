@@ -34,11 +34,11 @@ const EXT = {
 // A short domain hint helps Whisper with proper nouns and 中/英 code-switching
 // (it keeps English product/tech terms intact inside Chinese speech, and vice
 // versa). It biases recognition only — it is not added to the output.
-const PROMPT = 'A professional conversation (a job interview or an exploratory chat) about workplace ' +
-  'design, architecture, AI and data in the built environment, building performance, sustainability, ' +
-  'digital twins, and experience design. Speakers may be in English or in Chinese. Keep proper nouns ' +
-  'and technical terms intact: M Moser, ETS, Living Labs, digital twin, IEQ, BIM, Revit, Forma, ' +
-  'Floorcast, Ask Tom, thermal comfort, HVAC, workplace, agentic AI. 偶尔会有中英文混合。';
+const PROMPT = 'A professional conversation in English (a job interview or an exploratory chat) about ' +
+  'workplace design, architecture, AI and data in the built environment, building performance, ' +
+  'sustainability, digital twins, and experience design. Keep proper nouns and technical terms ' +
+  'intact: M Moser, ETS, Living Labs, digital twin, IEQ, BIM, Revit, Forma, Floorcast, Ask Tom, ' +
+  'thermal comfort, HVAC, workplace, agentic AI.';
 
 function hasCJK(s) {
   s = s || '';
@@ -113,9 +113,10 @@ module.exports = async (req, res) => {
     fd.append('model', process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe');
     fd.append('response_format', 'json');
     fd.append('prompt', PROMPT);
-    // No `language` is set ON PURPOSE: auto-detect handles BOTH pure-Chinese and
-    // code-switched 中/英 speech. (Forcing language=zh would garble English
-    // stretches; forcing en is exactly the old English-only behavior.)
+    // Force ENGLISH: these conversations are conducted in English, and auto-detect
+    // was producing mixed 中/英 transcripts. The primary line is now always pure
+    // English; the Chinese reading aid comes from the gloss below.
+    fd.append('language', 'en');
 
     const tr = await fetch('https://api.openai.com/v1/audio/transcriptions', {
       method: 'POST',
