@@ -107,7 +107,10 @@ module.exports = async (req, res) => {
     const ext = EXT[mime] || 'webm';
     const fd = new FormData();
     fd.append('file', new Blob([buf], { type: mime }), 'clip.' + ext);
-    fd.append('model', process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1');
+    // gpt-4o-transcribe is markedly more accurate than whisper-1, especially on
+    // code-switched 中/英 speech and proper nouns. Override with
+    // OPENAI_TRANSCRIBE_MODEL (e.g. gpt-4o-mini-transcribe for lower latency).
+    fd.append('model', process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe');
     fd.append('response_format', 'json');
     fd.append('prompt', PROMPT);
     // No `language` is set ON PURPOSE: auto-detect handles BOTH pure-Chinese and
